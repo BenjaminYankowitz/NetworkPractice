@@ -13,7 +13,7 @@ int main() {
     bind(serverSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress));
     listen(serverSocket, 5);
     int clientSocket = accept(serverSocket, nullptr, nullptr);
-    char buffer[256] = {0};
+    char buffer[256];
     while (true) {
         if (recv(clientSocket, buffer, sizeof(buffer), 0) <= 0) {
             break;
