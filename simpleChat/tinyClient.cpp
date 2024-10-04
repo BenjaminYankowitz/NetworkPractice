@@ -18,7 +18,7 @@ int main() {
     connections[0] = {fd:clientSocket,events:POLLIN};
     connections[1] = {fd:fileno(stdin),events:POLLIN};
     std::string fullMessage = "";
-    char buffer[257];
+    char buffer[2];
     while (true) {
         poll(connections,sizeof(connections)/sizeof(connections[0]),-1);
         if(connections[0].revents&POLLIN){

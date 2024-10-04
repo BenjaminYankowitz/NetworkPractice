@@ -1,20 +1,27 @@
 
+#include <fcntl.h>
 #include <iostream>
+#include <memory>
 #include <netinet/in.h>
+#include <poll.h>
+#include <queue>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
-#include <poll.h>
-#include <memory>
-#include <queue>
-#include <fcntl.h>
 
-pollfd getpollFd(int serverSocket){
+pollfd getpollFd(int serverSocket) {
     pollfd toRet;
     toRet.fd = accept(serverSocket, nullptr, nullptr);
     toRet.events = POLLIN;
     return toRet;
 }
+
+class UserInfo {
+public:
+    std::queue<std::shared_ptr<std::string>> toPrint;
+    std::size_t currentSpot = 0;
+    std::string incomingMessage = "";
+};
 
 int main() {
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -25,47 +32,59 @@ int main() {
     bind(serverSocket, (sockaddr *)&serverAddress, sizeof(serverAddress));
     listen(serverSocket, 5);
     std::vector<pollfd> clientSockets;
-    std::vector<std::queue<std::shared_ptr<std::string>>> toPrint(1);
+    std::vector<UserInfo> clientInfo(2);
+    clientSockets.push_back({fd : serverSocket, events : POLLIN});
     clientSockets.push_back(getpollFd(serverSocket));
     fcntl(serverSocket, F_SETFL, fcntl(serverSocket, F_GETFL, 0) | O_NONBLOCK);
-    char buffer[256];
-    while (clientSockets.size()>0) {
-        int toDo = poll(clientSockets.data(),clientSockets.size(),100);
+    char buffer[257];
+    while (clientSockets.size() > 1) {
+        int toDo = poll(clientSockets.data(), clientSockets.size(), -1);
         pollfd possible = getpollFd(serverSocket);
-        if(possible.fd!=-1){
+        if (possible.fd != -1) {
             clientSockets.push_back(possible);
-            toPrint.push_back(std::queue<std::shared_ptr<std::string>>());
+            clientInfo.push_back(UserInfo());
         }
-        if(toDo == 0){
+        if (toDo == 0) {
             continue;
         }
-        for(std::size_t i = 0; i < clientSockets.size(); i++){
-            if(clientSockets[i].revents&POLLIN){
-                if (recv(clientSockets[i].fd, buffer, sizeof(buffer), 0) <= 0) {
+        for (std::size_t i = 1; i < clientSockets.size(); i++) {
+            if (clientSockets[i].revents & POLLIN) {
+                ssize_t charRecive = recv(clientSockets[i].fd, buffer, sizeof(buffer) - 1, 0);
+                if (charRecive <= 0) {
                     clientSockets[i] = clientSockets.back();
-                    toPrint[i] = toPrint.back();
+                    clientInfo[i] = clientInfo.back();
                     clientSockets.pop_back();
-                    toPrint.pop_back();
+                    clientInfo.pop_back();
                     i--;
                     continue;
                 }
-                std::shared_ptr<std::string> strPtr = std::make_shared<std::string>(buffer);
-                for(std::size_t i2 = 0; i2 < toPrint.size(); i2++){
-                    if(i2==i){
-                        continue;
+                buffer[charRecive] = '\0';
+                clientInfo[i].incomingMessage += buffer;
+                if (buffer[charRecive - 1] == '\n') {
+                    std::shared_ptr<std::string> strPtr = std::make_shared<std::string>(std::move(clientInfo[i].incomingMessage));
+                    clientInfo[i].incomingMessage = "";
+                    for (std::size_t i2 = 1; i2 < clientInfo.size(); i2++) {
+                        if (i2 == i) {
+                            continue;
+                        }
+                        clientInfo[i2].toPrint.push(strPtr);
+                        clientSockets[i2].events |= POLLOUT;
                     }
-                    toPrint[i2].push(strPtr);
-                    clientSockets[i2].events|=POLLOUT;
                 }
             }
-            if(clientSockets[i].revents&POLLOUT){
-                send(clientSockets[i].fd,toPrint[i].front()->c_str(),toPrint[i].front()->size()+1,0);
-                toPrint[i].pop();
-                if(toPrint[i].empty()){
-                    clientSockets[i].events=POLLIN;
+            if (clientSockets[i].revents & POLLOUT) {
+                UserInfo& cClient = clientInfo[i];
+                const std::string& prntStr = *cClient.toPrint.front();
+                cClient.currentSpot+=send(clientSockets[i].fd, prntStr.c_str()+cClient.currentSpot, prntStr.size()-cClient.currentSpot, 0);
+                if(cClient.currentSpot==prntStr.size()){
+                    clientInfo[i].toPrint.pop();
+                    cClient.currentSpot = 0;
+                }
+                if (clientInfo[i].toPrint.empty()) {
+                    clientSockets[i].events = POLLIN;
                 }
             }
-        }        
+        }
     }
     close(serverSocket);
     return 0;
