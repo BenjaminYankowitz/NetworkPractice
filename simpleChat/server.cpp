@@ -13,6 +13,7 @@ pollfd getpollFd(int serverSocket) {
     pollfd toRet;
     toRet.fd = accept(serverSocket, nullptr, nullptr);
     toRet.events = POLLIN;
+    toRet.revents = 0;
     return toRet;
 }
 
@@ -38,12 +39,12 @@ int main() {
     }
     std::vector<pollfd> clientSockets;
     std::vector<UserInfo> clientInfo(2);
-    clientSockets.push_back({fd : serverSocket, events : POLLIN});
+    clientSockets.push_back({fd : serverSocket, events : POLLIN,revents:0});
     clientSockets.push_back(getpollFd(serverSocket));
     fcntl(serverSocket, F_SETFL, fcntl(serverSocket, F_GETFL, 0) | O_NONBLOCK);
     char buffer[257];
     while (clientSockets.size() > 1) {
-        int toDo = poll(clientSockets.data(), clientSockets.size(), -1);
+        poll(clientSockets.data(), clientSockets.size(), -1);
         if(clientSockets[0].revents & POLLIN){
             pollfd possible = getpollFd(serverSocket);
             if (possible.fd != -1) {
