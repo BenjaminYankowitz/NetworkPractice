@@ -25,12 +25,17 @@ public:
 
 int main() {
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(serverSocket==-1){
+        return 1;
+    }
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(8080);
     serverAddress.sin_addr.s_addr = INADDR_ANY;
     bind(serverSocket, (sockaddr *)&serverAddress, sizeof(serverAddress));
-    listen(serverSocket, 5);
+    if(listen(serverSocket, 5)==-1){
+        return 1;
+    }
     std::vector<pollfd> clientSockets;
     std::vector<UserInfo> clientInfo(2);
     clientSockets.push_back({fd : serverSocket, events : POLLIN});
@@ -39,13 +44,12 @@ int main() {
     char buffer[257];
     while (clientSockets.size() > 1) {
         int toDo = poll(clientSockets.data(), clientSockets.size(), -1);
-        pollfd possible = getpollFd(serverSocket);
-        if (possible.fd != -1) {
-            clientSockets.push_back(possible);
-            clientInfo.push_back(UserInfo());
-        }
-        if (toDo == 0) {
-            continue;
+        if(clientSockets[0].revents & POLLIN){
+            pollfd possible = getpollFd(serverSocket);
+            if (possible.fd != -1) {
+                clientSockets.push_back(possible);
+                clientInfo.push_back(UserInfo());
+            }
         }
         for (std::size_t i = 1; i < clientSockets.size(); i++) {
             if (clientSockets[i].revents & POLLIN) {
