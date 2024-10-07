@@ -15,8 +15,8 @@ int main() {
         return 1;
     }
     pollfd connections[2];
-    connections[0] = {fd:clientSocket,events:POLLIN};
-    connections[1] = {fd:fileno(stdin),events:POLLIN};
+    connections[0] = {fd:clientSocket,events:POLLIN,revents:0};
+    connections[1] = {fd:fileno(stdin),events:POLLIN,revents:0};
     std::string fullMessage = "";
     char buffer[2];
     while (true) {
