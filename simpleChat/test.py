@@ -1,7 +1,7 @@
 import random
 import subprocess
 import time
-from locust import User, task, between, events
+from locust import User, task, between, events # type: ignore
 
 
 def sendText(client: subprocess.Popen[str], text: str) :
@@ -32,8 +32,7 @@ class NormalUser(User):
         sendText(self.client,"q")
 
 class LazyUser(User):
-    weight = 0
-    wait_time = between(20, 100)
+    wait_time = between(200, 1000)
 
     @task
     def hello_world(self):

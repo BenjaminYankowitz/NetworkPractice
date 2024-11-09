@@ -1,0 +1,9 @@
+"""Bazel module dependencies"""
+bazel_dep(name = "protobuf", version = "0.0.0", dev_dependency = True)
+
+local_path_override(
+    module_name = "protobuf",
+    path = "/home/ben/coolstuff/C++/protobuf",
+)
+
+bazel_dep(name = "rules_cc", version = "0.0.13")

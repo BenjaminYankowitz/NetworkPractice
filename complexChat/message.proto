@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+message ServerMessage {
+  string messageText = 1;
+}
+
+// message ClientMessage {
+//   string query = 1;
+// }

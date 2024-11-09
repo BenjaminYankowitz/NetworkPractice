@@ -99,7 +99,11 @@ int main() {
                     removeClient(i);
                     continue;
                 } else if(charRecive == -1){
-                    // perror("No recive ");
+                    if(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR){
+                        continue;
+                    }
+                    perror("No recive ");
+                    removeClient(i);
                     continue;
                 }
                 buffer[charRecive] = '\0';
