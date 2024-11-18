@@ -41,7 +41,7 @@ cc_proto_library(
 # cc_library/cc_binary targets can depend on cc_proto_library targets.
 cc_binary(
     name = "server.out",
-    srcs = ["server.cpp","config.h"],
+    srcs = ["server.cpp","config.h","common.h"],
     deps = [
         ":message_cc_proto",
         "@protobuf",
@@ -51,7 +51,7 @@ cc_binary(
 # cc_library/cc_binary targets can depend on cc_proto_library targets.
 cc_binary(
     name = "client.out",
-    srcs = ["client.cpp","config.h"],
+    srcs = ["client.cpp","config.h","common.h"],
     deps = [
         ":message_cc_proto",
         "@protobuf",
@@ -67,7 +67,8 @@ pkg_files(
         "server.cpp",
         "client.cpp",
         "message.proto",
-        "config.h"
+        "config.h",
+        "common.h",
     ],
     prefix = ".",
     strip_prefix = strip_prefix.from_root(""),

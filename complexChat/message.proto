@@ -4,6 +4,6 @@ message ServerMessage {
   string messageText = 1;
 }
 
-// message ClientMessage {
-//   string query = 1;
-// }
+message ClientMessage {
+  string messageText = 1;
+}
