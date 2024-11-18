@@ -19,26 +19,32 @@ concept DeSerializable = requires(T a, uint8_t *data, std::size_t size) {
     { a.ParseFromArray(data, size) };
 };
 
-
 template <typename T>
 concept ReciveAble = requires(T a) {
-    { a.nextMessage } -> DeSerializable;
+    { a.receivedMessage } -> DeSerializable;
     { a.recivedMessageBuffer } -> std::convertible_to<std::vector<uint8_t>>;
     { a.currentReciveSpot } -> std::convertible_to<std::size_t>;
-    { a.nextMesageSize } -> std::convertible_to<std::size_t>;
+    { a.nextReceivedMessageSize } -> std::convertible_to<std::size_t>;
 };
 
 
 template<ReciveAble reciveAble>
-ReciveMessageReturn reciveMessage(int clientSocket, reciveAble& messageInfo) {
+ReciveMessageReturn reciveMessage(reciveAble& messageInfo, const pollfd& clientSocket) {
+    std::size_t goalSize = messageInfo.nextReceivedMessageSize ? messageInfo.nextReceivedMessageSize : messagePadding;
+    if(messageInfo.recivedMessageBuffer.size()<goalSize){
+        messageInfo.recivedMessageBuffer.resize(goalSize);
+    }
     ReciveMessageReturn ret;
-    ssize_t numChar = recv(clientSocket, messageInfo.recivedMessageBuffer.data() + messageInfo.currentReciveSpot, messageInfo.recivedMessageBuffer.size() - messageInfo.currentReciveSpot, 0);
+    ssize_t numChar = recv(clientSocket.fd, messageInfo.recivedMessageBuffer.data() + messageInfo.currentReciveSpot, messageInfo.recivedMessageBuffer.size() - messageInfo.currentReciveSpot, 0);
+    if(numChar==0){
+        ret.endConnection=true;
+        return ret;
+    }
     if (numChar != -1) {
         messageInfo.currentReciveSpot += numChar;
-        std::size_t goalSize = messageInfo.nextMesageSize ? messageInfo.nextMesageSize : messagePadding;
         if (messageInfo.currentReciveSpot == goalSize) {
-            if (messageInfo.nextMesageSize) {
-                messageInfo.nextMessage.ParseFromArray(messageInfo.recivedMessageBuffer.data(), messageInfo.recivedMessageBuffer.size());
+            if (messageInfo.nextReceivedMessageSize) {
+                messageInfo.receivedMessage.ParseFromArray(messageInfo.recivedMessageBuffer.data(), messageInfo.recivedMessageBuffer.size());
                 ret.messageFinished=true;
                 goalSize=0;
             } else {
@@ -54,7 +60,7 @@ ReciveMessageReturn reciveMessage(int clientSocket, reciveAble& messageInfo) {
             }
             messageInfo.currentReciveSpot = 0;
             messageInfo.recivedMessageBuffer.resize(goalSize ? goalSize : messagePadding);
-            messageInfo.nextMesageSize = goalSize;
+            messageInfo.nextReceivedMessageSize = goalSize;
         }
     } else {
         if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR){
@@ -76,16 +82,16 @@ concept Serializable = requires(T a, uint8_t* dataPtr){
 
 template<typename T>
 concept SendAble = requires(T a){
-    {a.nextMesage} -> Serializable;
+    {a.messageToSend} -> Serializable;
     {a.outgoingMessage} -> std::convertible_to<std::vector<uint8_t>>;
-    {a.currentSpot} -> std::convertible_to<std::size_t>;
+    {a.currentSendingSpot} -> std::convertible_to<std::size_t>;
 };
 
 template<SendAble sendAble>
 bool sendMessage(sendAble &clientInfo, pollfd &clientSocket) {
     std::vector<uint8_t> &prntStr = clientInfo.outgoingMessage;
     if (prntStr.size() == 0) {
-        std::size_t bytesUsed = clientInfo.nextMesage.ByteSizeLong();
+        std::size_t bytesUsed = clientInfo.messageToSend.ByteSizeLong();
         assert(bytesUsed<(1<<(numSizeBytes*8)));
         prntStr.resize(messagePadding+bytesUsed);
         std::size_t bytesUsedLeft = bytesUsed;
@@ -94,20 +100,20 @@ bool sendMessage(sendAble &clientInfo, pollfd &clientSocket) {
             bytesUsedLeft>>=8;
         }
         prntStr[numSizeBytes] = magicNumber;
-        clientInfo.nextMesage.SerializeWithCachedSizesToArray(prntStr.data()+messagePadding);
-        clientInfo.nextMesage.Clear();
+        clientInfo.messageToSend.SerializeWithCachedSizesToArray(prntStr.data()+messagePadding);
+        clientInfo.messageToSend.Clear();
     }
     if (prntStr.size() != 0) {
-        ssize_t charSent = send(clientSocket.fd, prntStr.data() + clientInfo.currentSpot, prntStr.size() - clientInfo.currentSpot, MSG_NOSIGNAL);
+        ssize_t charSent = send(clientSocket.fd, prntStr.data() + clientInfo.currentSendingSpot, prntStr.size() - clientInfo.currentSendingSpot, MSG_NOSIGNAL);
         if (charSent == -1) {
             // perror("Send fail");
             return false;
         }
-        clientInfo.currentSpot += charSent;
-        if (clientInfo.currentSpot == prntStr.size()) {
-            clientInfo.outgoingMessage.clear();
-            clientInfo.currentSpot = 0;
-            if (clientInfo.nextMesage.messagetext().size()) {
+        clientInfo.currentSendingSpot += charSent;
+        if (clientInfo.currentSendingSpot == prntStr.size()) {
+            prntStr.clear();
+            clientInfo.currentSendingSpot = 0;
+            if (clientInfo.messageToSend.ByteSizeLong()==0) {
                 clientSocket.events -= POLLOUT;
             }
         }

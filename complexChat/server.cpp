@@ -22,44 +22,24 @@ pollfd getpollFd(int serverSocket) {
 
 class UserInfo {
 public:
-    ServerMessage nextMesage;
+    ServerMessage messageToSend;
     std::vector<uint8_t> outgoingMessage;
-    std::size_t currentSpot = 0;
-    std::string incomingMessage = "";
+    std::size_t currentSendingSpot = 0;
+    ClientMessage receivedMessage;
+    std::vector<uint8_t> recivedMessageBuffer;
+    std::size_t currentReciveSpot = 0;
+    std::size_t nextReceivedMessageSize = 0;
 };
 
-ReciveMessageReturn reciveMessageBad(UserInfo &clientInfo, const pollfd &clientSocket) {
-    ReciveMessageReturn ret;
-    char buffer[4097];
-    ssize_t charRecive = recv(clientSocket.fd, buffer, sizeof(buffer) - 1, 0);
-    if (charRecive == 0) {
-        ret.endConnection = true;
-        return ret;
-    } else if (charRecive == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-            return ret;
-        }
-        perror("No recive ");
-        ret.endConnection = true;
-        return ret;
-    }
-    buffer[charRecive] = '\0';
-    clientInfo.incomingMessage += buffer;
-    if (buffer[charRecive - 1] == '\n') {
-        ret.messageFinished = true;
-    }
-    return ret;
-}
-
-void prepMessagesToSend(std::vector<UserInfo> &clientInfo, std::vector<pollfd>& clientSockets, std::size_t sentFrom) {
+void handleRecivedMessage(std::vector<UserInfo> &clientInfo, std::vector<pollfd>& clientSockets, std::size_t sentFrom) {
     for (std::size_t i = 1; i < clientInfo.size(); i++) {
         if (i == sentFrom) {
             continue;
         }
-        *clientInfo[i].nextMesage.mutable_messagetext() += clientInfo[sentFrom].incomingMessage;
+        *clientInfo[i].messageToSend.mutable_messagetext() += clientInfo[sentFrom].receivedMessage.messagetext();
         clientSockets[i].events |= POLLOUT;
     }
-    clientInfo[sentFrom].incomingMessage.clear();
+    clientInfo[sentFrom].receivedMessage.Clear();
 }
 
 int main() {
@@ -123,9 +103,9 @@ int main() {
                 numLeft--;
             }
             if (clientSockets[i].revents & POLLIN) {
-                ReciveMessageReturn messageInfo = reciveMessageBad(clientInfo[i], clientSockets[i]);
+                ReciveMessageReturn messageInfo = reciveMessage(clientInfo[i], clientSockets[i]);
                 if (messageInfo.messageFinished) {
-                    prepMessagesToSend(clientInfo,clientSockets,i);
+                    handleRecivedMessage(clientInfo,clientSockets,i);
                 }
                 if (messageInfo.endConnection) {
                     removeClient(i);

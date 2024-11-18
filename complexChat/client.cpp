@@ -9,15 +9,17 @@
 
 class MessageInfo {
 public:
-    ServerMessage nextMessage;
+    ServerMessage receivedMessage;
     std::vector<uint8_t> recivedMessageBuffer;
-    std::size_t currentReciveSpot;
-    std::size_t nextMesageSize;
+    std::size_t currentReciveSpot = 0;
+    std::size_t nextReceivedMessageSize = 0;
+    ServerMessage messageToSend;
+    std::vector<uint8_t> outgoingMessage;
+    std::size_t currentSendingSpot = 0;
 };
 
 int main() {
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    std::size_t printed = 0;
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(8080);
@@ -30,33 +32,20 @@ int main() {
     connections[1] = {fd : fileno(stdin), events : POLLIN, revents : 0};
     std::string fullMessage = "";
     MessageInfo messageInfo;
-    messageInfo.currentReciveSpot = 0;
-    messageInfo.nextMesageSize = 0;
-    messageInfo.recivedMessageBuffer.resize(messagePadding);
     while (true) {
         poll(connections, sizeof(connections) / sizeof(connections[0]), -1);
         if (connections[0].revents & POLLIN) {
-            ReciveMessageReturn status = reciveMessage(clientSocket,messageInfo);
+            ReciveMessageReturn status = reciveMessage(messageInfo,connections[0]);
             if(status.messageFinished){
-                std::cout << messageInfo.nextMessage.messagetext();
-                messageInfo.nextMessage.Clear();
+                std::cout << messageInfo.receivedMessage.messagetext() << '\n';
+                messageInfo.receivedMessage.Clear();
             }
             if(status.endConnection){
                 exit(1);
             }
         }
         if (connections[0].revents & POLLOUT) {
-            ssize_t numChar = send(clientSocket, fullMessage.c_str() + printed, fullMessage.size() - printed, MSG_NOSIGNAL);
-            if (numChar != -1) {
-                printed += numChar;
-                if (printed == fullMessage.size()) {
-                    printed = 0;
-                    fullMessage = "";
-                    connections[0].events -= POLLOUT;
-                } else {
-                    perror("Sending message failed");
-                }
-            }
+            sendMessage(messageInfo, connections[0]);
         }
         if (connections[1].revents & POLLIN) {
             std::string message;
@@ -64,12 +53,12 @@ int main() {
             if (message == "q") {
                 break;
             }
-            fullMessage += message + '\n';
             connections[0].events |= POLLOUT;
+            *messageInfo.messageToSend.mutable_messagetext()+=message;
         }
     }
-    if (!fullMessage.empty()) {
-        send(clientSocket, fullMessage.c_str(), fullMessage.size(), 0);
+    while (connections[0].events & POLLOUT) {
+        sendMessage(messageInfo, connections[0]);
     }
     close(clientSocket);
 
