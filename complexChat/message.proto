@@ -1,9 +1,17 @@
 syntax = "proto3";
 
+message Event {
+  uint32 userId = 1;
+  repeated string message = 2;
+  optional string newUserName = 3;
+  bool exited = 4;
+}
+
 message ServerMessage {
-  string messageText = 1;
+  repeated Event events = 1;
 }
 
 message ClientMessage {
-  string messageText = 1;
+  repeated string message = 1;
+  optional string newUserName = 2;
 }
