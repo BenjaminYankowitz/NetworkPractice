@@ -1,4 +1,3 @@
-#include <iostream>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -17,6 +16,6 @@ int main() {
     char buffer[21] = "fullMessage.c_str()\n";
     recv(clientSocket, buffer, 1, 0);
     send(clientSocket, buffer, 20, 0);
-    recv(clientSocket, buffer, 1, 0)
+    recv(clientSocket, buffer, 1, 0);
     return 0;
 }

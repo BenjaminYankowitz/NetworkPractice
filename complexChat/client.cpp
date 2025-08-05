@@ -5,7 +5,7 @@
 #include <poll.h>
 #include "message.pb.h"
 #include "config.h"
-
+#include <vector>
 int main() {
     ServerMessage currentMessage;
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -25,7 +25,7 @@ int main() {
     bool hasMessage = false;
     std::size_t goalSize = paddingBytes;
     std::size_t recvPos = 0;
-    std::vector<uint8_t> buffer(goalSize);
+    std::vector<std::uint8_t> buffer(goalSize);
     while (true) {
         poll(connections,sizeof(connections)/sizeof(connections[0]),-1);
         if(connections[0].revents&POLLIN){

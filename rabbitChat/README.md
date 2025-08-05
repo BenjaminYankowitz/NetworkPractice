@@ -1,0 +1,2 @@
+Set up cmake with
+cmake -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_CXX_STANDARD=17 -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=1

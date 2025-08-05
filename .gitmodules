@@ -1,0 +1,3 @@
+[submodule "rabbitChat/rmqcpp"]
+	path = rabbitChat/rmqcpp
+	url = https://github.com/bloomberg/rmqcpp.git
