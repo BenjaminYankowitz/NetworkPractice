@@ -17,6 +17,9 @@
 #include <bsl_optional.h>
 #include <bsl_vector.h>
 
+#include <cstdlib>
+#include <iostream>
+#include <limits>
 #include <string>
 #include "message.pb.h"
 using namespace BloombergLP;
@@ -62,31 +65,35 @@ const rmqp::Producer::SendStatus sendResult = producer.send(
 }
 
 int main(int argc, char** argv) {
-    // if (argc < 2) {
-    //     std::cerr << "USAGE: " << argv[0] << " <amqp uri>\n";
-    //     return 1;
-    // }
-    const char * const ampquri = "amqp://localhost";
+    if (argc < 2) {
+        std::cerr << "USAGE: " << argv[0] << " <amqp uri>\n";
+        return 1;
+    }
+    //amqp://localhost
+    const char * const amqpuri = argv[1];
     rmqa::RabbitContext rabbit;
 
     bsl::optional<rmqt::VHostInfo> vhostInfo =
-        rmqa::ConnectionString::parse(ampquri);
+        rmqa::ConnectionString::parse(amqpuri);
 
     if (!vhostInfo) {
-        std::cerr << "Failed to parse connection string: " << ampquri << "\n";
+        std::cerr << "Failed to parse connection string: " << amqpuri << "\n";
         return 1;
     }
     
+    std::cout << "What is your name?\n";
     const std::string username = [](){
         std::string ret;
-        std::cout << "What is your name?\n";
-        std::getline(std::cin,ret);
+        if (!std::getline(std::cin, ret)) {
+            std::cerr << "Failed to read username\n";
+            std::exit(1);
+        }
         return ret;
     }();
     
     // Returns immediately, setup performed on a different thread
     bsl::shared_ptr<rmqa::VHost> vhost = rabbit.createVHostConnection(
-        username, // Connecion Name Visible in management UI
+        username, // Connection Name Visible in management UI
         vhostInfo.value());
 
     // How many messages can be awaiting confirmation before `send` blocks
@@ -96,11 +103,14 @@ int main(int argc, char** argv) {
     rmqt::ExchangeHandle exch = topology.addExchange(ExchangeName,rmqt::ExchangeType::FANOUT);
     rmqt::QueueHandle queue   = topology.addQueue("",rmqt::AutoDelete::ON);
     topology.bind(exch, queue, "routingkey");
-    DefaultMessage protoMessage;
-    bsl::shared_ptr<bsl::vector<std::uint8_t>> messageData = bsl::make_shared<bsl::vector<std::uint8_t>>();
-    rmqt::Result<rmqa::Consumer> consumerResult =  vhost->createConsumer(topology,queue,[&protoMessage,&username](rmqp::MessageGuard& messageGuard){
+    rmqt::Result<rmqa::Consumer> consumerResult =  vhost->createConsumer(topology,queue,[&username](rmqp::MessageGuard& messageGuard){
         const rmqt::Message& message = messageGuard.message();
-        protoMessage.ParseFromArray(message.payload(),message.payloadSize());
+        DefaultMessage protoMessage;
+        if (!protoMessage.ParseFromArray(message.payload(),message.payloadSize())) {
+            std::cerr << "Failed to parse message\n";
+            messageGuard.ack();
+            return;
+        }
         if(protoMessage.name()==username){
             messageGuard.ack();
             return;
@@ -115,7 +125,7 @@ int main(int argc, char** argv) {
                   << "\n";
         return 1;
     }
-    bsl::shared_ptr<rmqa::Consumer> consumer = consumerResult.value();
+    [[maybe_unused]] bsl::shared_ptr<rmqa::Consumer> consumer = consumerResult.value();
 
     rmqt::Result<rmqa::Producer> producerResult =
         vhost->createProducer(topology, exch, maxOutstandingConfirms);
@@ -137,14 +147,18 @@ int main(int argc, char** argv) {
     // their message undelivered until `receiveConfirmation` is called.
 
     std::string messageStr;
-    while(true){
-        std::getline(std::cin,messageStr);
+    while(std::getline(std::cin, messageStr)){
+        DefaultMessage protoMessage;
         protoMessage.set_messagetext(messageStr);
         protoMessage.set_name(username);
         const std::size_t messageBytes = protoMessage.ByteSizeLong();
-        messageData->resize(messageBytes);
-        protoMessage.SerializeToArray(messageData->data(), messageBytes);
-        rmqt::Message message(messageData);
+        if (messageBytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            std::cerr << "Message too large\n";
+            return 1;
+        }
+        auto messageData = bsl::make_shared<bsl::vector<std::uint8_t>>(messageBytes);
+        protoMessage.SerializeToArray(messageData->data(), static_cast<int>(messageBytes));
+        rmqt::Message message(std::move(messageData));
         if(!sendMessage(*producer,message)){
             return 1;
         }
