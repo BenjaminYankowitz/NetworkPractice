@@ -13,7 +13,6 @@ target_link_libraries(myproto
 )
 
 protobuf_generate(TARGET myproto LANGUAGE cpp)
-
 add_executable(client client.cpp)
-
+set_property(TARGET client PROPERTY CXX_STANDARD 17)
 target_link_libraries(client rmqcpp::rmq myproto)
