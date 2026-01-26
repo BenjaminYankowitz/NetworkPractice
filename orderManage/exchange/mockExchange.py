@@ -1,6 +1,5 @@
 import os
 from datetime import datetime
-import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 from dotenv import load_dotenv
