@@ -7,7 +7,9 @@
 *.o
 *.so
 *.out
+#proto buff
 *.pb.*
+*_pb2.py
 build/
 vcpkg_installed/
 # Packages #
@@ -42,7 +44,6 @@ Thumbs.db
 # Ignore the bazel symlinks
 bazel-*
 
-#proto buff
 
 # Caches
 .cache/
