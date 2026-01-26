@@ -8,7 +8,7 @@ import pika
 import exchangeMessages_pb2
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/exchangedb")
+DATABASE_URL = os.getenv("EXCHANGE_DATABASE_URL")
 
 
 pool = ConnectionPool(DATABASE_URL, min_size=2, max_size=10, kwargs={"row_factory": dict_row})
