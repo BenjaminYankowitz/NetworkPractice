@@ -1,0 +1,10 @@
+add_library(ExchangeProto STATIC exchangeMessages.proto)
+
+target_include_directories(ExchangeProto INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
+protobuf_generate(TARGET ExchangeProto LANGUAGE python)
+protobuf_generate(TARGET ExchangeProto LANGUAGE cpp)
+
+
+add_executable(exchange mockExchange.py)
+# set_property(TARGET orderManage PROPERTY CXX_STANDARD 17)
+target_link_libraries(exchange ExchangeProto)

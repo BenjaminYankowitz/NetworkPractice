@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+message OrderMessage {
+  uint32 originId = 1;
+  string symbol = 3;
+  bool BuySide = 2; 
+  uint64 quantitiy = 4;
+  uint64 price = 5;
+}
+
+message OrderFill {
+  uint64 orderId = 1;
+  uint64 filled = 2;
+}
+
+message OrderResponse {
+  bool successful = 1;
+  uint64 amountFilled = 2;
+  uint64 price = 3;
+  optional uint64 orderId = 4;
+}
