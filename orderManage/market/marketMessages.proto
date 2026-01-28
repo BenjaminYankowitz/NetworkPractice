@@ -1,21 +1,22 @@
 syntax = "proto3";
 
 message OrderMSG {
-  int64 originId = 1;
-  string symbol = 3;
+  string symbol = 1;
   bool buySide = 2; 
-  int64 quantitiy = 4;
-  int64 price = 5;
+  int64 quantity = 3;
+  int64 price = 4;
 }
 
 message OrderFillMSG {
+  int64 orderID = 1;
   int64 filled = 2;
 }
 
 message OrderResponseMSG {
   bool successful = 1;
-  int64 amountFilled = 2;
-  int64 price = 3;
+  optional int64 orderID = 2;
+  int64 amountFilled = 3;
+  int64 price = 4;
 }
 
 message SignupMSG{
@@ -26,6 +27,7 @@ enum SignupResponseEnum {
   success = 0;
   tooLong = 1;
   taken = 2;
+  malformed = 3;
 }
 
 message SignupResponseMSG {

@@ -1,13 +1,16 @@
 #include <bslstl_sharedptr.h>
+#include <cassert>
+#include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <rmqa_connectionstring.h>
-#include <rmqa_producer.h>
 #include <rmqa_consumer.h>
+#include <rmqa_producer.h>
 #include <rmqa_rabbitcontext.h>
 #include <rmqa_topology.h>
 #include <rmqa_vhost.h>
-#include <rmqp_producer.h>
 #include <rmqp_consumer.h>
+#include <rmqp_producer.h>
 #include <rmqt_confirmresponse.h>
 #include <rmqt_exchange.h>
 #include <rmqt_exchangetype.h>
@@ -22,33 +25,86 @@
 #include <bsl_vector.h>
 
 #include "marketMessages.pb.h"
+#include <condition_variable>
 #include <cstdlib>
 #include <iostream>
-#include<random>
+#include <random>
 #include <sys/types.h>
+#include <thread>
 using namespace BloombergLP;
+
+constexpr int maxSymbolSize = 5;
+struct MarketOrder {
+  MarketOrder(std::string_view symbolI, int64_t amountI, int64_t priceI,
+              bool buySideI)
+      : symbol(symbolI), amount(amountI), price(priceI), buySide(buySideI) {
+    assert(symbol.size() <= maxSymbolSize);
+    assert(amount > 0);
+    assert(price >= 0);
+  }
+  OrderMSG toOrderMSG() const {
+    OrderMSG ret;
+    ret.set_symbol(symbol);
+    ret.set_quantity(amount);
+    ret.set_price(price);
+    ret.set_buyside(buySide);
+    return ret;
+  }
+  std::string_view symbol;
+  int64_t amount;
+  int64_t price;
+  bool buySide;
+};
+
+class FormatAsMoney{
+  public:
+  FormatAsMoney(long amnt) : amnt_(amnt){}
+  friend std::ostream &operator<<(std::ostream &out, FormatAsMoney money);
+  private:
+  int amnt_;
+};
+std::ostream &operator<<(std::ostream &out, FormatAsMoney money){
+  int dollars = money.amnt_/100;
+  int cents = money.amnt_%100;
+  out << "$" << dollars;
+  if(cents!=0){
+    out << '.';
+    if(cents<10){
+      out << '0';
+    }
+    out << cents;
+  }
+  return out;
+}
+std::ostream &operator<<(std::ostream &out, MarketOrder order) {
+  return out << (order.buySide ? "Buy" : "Sell") << "ing " << order.amount
+             << " of " << order.symbol << " for " << FormatAsMoney(order.price);
+}
+
 constexpr const char *ExchangeName = "MarketExchange";
 
-bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message) {
-  const bsl::string routingKey = "signup";
-  auto confirmCallback = [](const rmqt::Message &message, const bsl::string &routingKey,
-         const rmqt::ConfirmResponse &response) {
-        // https://www.rabbitmq.com/confirms.html#when-publishes-are-confirmed
-        if (response.status() == rmqt::ConfirmResponse::ACK) {
-          // Message is now guaranteed to be safe with the broker.
-          // Now is the time to reply to the request, commit the
-          // database transaction, or ack the RabbitMQ message which
-          // triggered this publish
-        } else {
-          // Send error response, rollback transaction, nack message
-          // and/or raise an alarm for investigation - your message is not
-          // delivered to all (or perhaps any) of the queues it was
-          // intended for.
-          std::cerr << "Message not confirmed: " << message.guid()
-                    << " for routing key " << routingKey << " " << response
-                    << "\n";
-        }};
-  const rmqp::Producer::SendStatus sendResult = producer.send(message,routingKey,confirmCallback);
+bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message,
+                 const bsl::string &routingKey) {
+  auto confirmCallback = [](const rmqt::Message &message,
+                            const bsl::string &routingKey,
+                            const rmqt::ConfirmResponse &response) {
+    // https://www.rabbitmq.com/confirms.html#when-publishes-are-confirmed
+    if (response.status() == rmqt::ConfirmResponse::ACK) {
+      // Message is now guaranteed to be safe with the broker.
+      // Now is the time to reply to the request, commit the
+      // database transaction, or ack the RabbitMQ message which
+      // triggered this publish
+    } else {
+      // Send error response, rollback transaction, nack message
+      // and/or raise an alarm for investigation - your message is not
+      // delivered to all (or perhaps any) of the queues it was
+      // intended for.
+      std::cerr << "Message not confirmed: " << message.guid()
+                << " for routing key " << routingKey << " " << response << "\n";
+    }
+  };
+  const rmqp::Producer::SendStatus sendResult =
+      producer.send(message, routingKey, confirmCallback);
 
   if (sendResult != rmqp::Producer::SENDING) {
     if (sendResult == rmqp::Producer::DUPLICATE) {
@@ -63,38 +119,195 @@ bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message) {
   return true;
 }
 template <class T>
-void messageToArray(T message, bsl::vector<uint8_t>& buffer){
+void messageToArray(T message, bsl::vector<uint8_t> &buffer) {
   const std::size_t size = message.ByteSizeLong();
   buffer.clear();
   buffer.resize(size);
   message.SerializeWithCachedSizesToArray(buffer.data());
 }
 
-int64_t getId(){
+int64_t getId() {
   std::random_device dev;
   std::uniform_int_distribution<int64_t> dist;
   return dist(dev);
 }
 
-bool handleInitialResponse(const rmqt::Message& message){
-        SignupResponseMSG signupResponseMSG;
-        if (!signupResponseMSG.ParseFromArray(message.payload(),
-                                         message.payloadSize())) {
-          std::cerr << "Failed to parse message\n";
-          return false;
-        } else if(signupResponseMSG.result()==success){
-          std::cout << "Connected\n";
-          return true;
-        } else if (signupResponseMSG.result() == tooLong) {
-          std::cerr << "Username too long\n";
-          return false;
-        } else if(signupResponseMSG.result() == taken){
-            std::cerr << "Username taken\n";
-            return false;
-        } else {
-            std::cerr << "Unknown error\n";
-            return false;
+bool handleInitialResponse(const rmqt::Message &message) {
+  SignupResponseMSG signupResponseMSG;
+  if (!signupResponseMSG.ParseFromArray(message.payload(),
+                                        message.payloadSize())) {
+    std::cerr << "Failed to parse message\n";
+    return false;
+  } else if (signupResponseMSG.result() == success) {
+    std::cout << "Connected\n";
+    return true;
+  } else if (signupResponseMSG.result() == tooLong) {
+    std::cerr << "Username too long\n";
+    return false;
+  } else if (signupResponseMSG.result() == taken) {
+    std::cerr << "Username taken\n";
+    return false;
+  } else if (signupResponseMSG.result() == malformed) {
+    std::cerr << "message malformed\n";
+    return false;
+  } else {
+    std::cerr << "Unknown error\n";
+    return false;
+  }
+}
+
+struct ListenStuff {
+  rmqa::VHost &vhost;
+  rmqt::ExchangeHandle &exch;
+  rmqa::Topology &topology;
+};
+
+bool registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
+                        std::string_view username, const bsl::string &id) {
+  auto &[vhost, exch, topology] = listenStuff;
+  SignupMSG signupMSG;
+  signupMSG.set_name(username);
+  bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
+      bsl::make_shared<bsl::vector<uint8_t>>();
+  messageToArray(signupMSG, *rawData);
+  rmqt::Properties properties;
+  properties.replyTo = id;
+  properties.correlationId = id;
+  std::cout << properties.replyTo << '\n';
+  rmqt::Message message = rmqt::Message(rawData, properties);
+  rmqt::QueueHandle responseQueue =
+      topology.addQueue(id + ".activate", rmqt::AutoDelete::ON, rmqt::Durable::ON);
+  topology.bind(exch, responseQueue, id + ".activate");
+  std::condition_variable cv;
+  std::mutex m;
+  bool didQueue = true;
+  bool queueRet = false;
+  rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
+      topology, responseQueue,
+      [&cv, &m, &didQueue, &queueRet](rmqp::MessageGuard &messageGuard) {
+        {
+          std::lock_guard lk(m);
+          const rmqt::Message &message = messageGuard.message();
+          bool success = handleInitialResponse(message);
+          messageGuard.ack();
+          if (!success) {
+            didQueue = false;
+          }
+          queueRet = true;
         }
+        cv.notify_one();
+      });
+  if (!activateConsumerResult) {
+    // A fatal error such as `exch` not being present in `topology`
+    // A disconnection, or  will never permanently fail an operation
+    std::cerr << "Error creating connection: " << activateConsumerResult.error()
+              << "\n";
+    return 1;
+  }
+  bsl::shared_ptr<rmqa::Consumer> activateConsumer =
+      activateConsumerResult.value();
+  if (!sendMessage(producer, message, "signup")) {
+    return 1;
+  }
+  if (!producer.waitForConfirms(bsls::TimeInterval(5))) {
+    std::cerr << "Timeout expired for sending message to signup to market\n";
+  }
+
+  std::unique_lock lk(m);
+  cv.wait_for(lk, std::chrono::seconds(5), [&queueRet]() { return queueRet; });
+  activateConsumer->cancelAndDrain();
+  if (!queueRet) {
+    std::cerr << "Market did not confirm\n";
+    return false;
+  }
+  if (!didQueue) {
+    std::cerr << "Could not add to queue\n";
+    return false;
+  }
+  return true;
+}
+
+struct OrderListenhandle{
+  rmqt::QueueHandle responseQueue;
+  bsl::shared_ptr<rmqa::Consumer> responseConsumer;
+  rmqt::QueueHandle fillQueue;
+  bsl::shared_ptr<rmqa::Consumer> fillConsumer;
+};
+
+OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
+                                    const bsl::string &id) {
+  OrderListenhandle ret;
+  auto &[vhost, exch, topology] = listenStuff;
+  bsl::string responseQueueKey = id + ".orderResponse";
+  std::cout << responseQueueKey << '\n';
+  ret.responseQueue =
+      topology.addQueue(responseQueueKey, rmqt::AutoDelete::OFF, rmqt::Durable::ON);
+  topology.bind(exch, ret.responseQueue, responseQueueKey);
+  rmqt::Result<rmqa::Consumer> responsesConsumerResult = vhost.createConsumer(
+      topology, ret.responseQueue,
+      [](rmqp::MessageGuard &messageGuard) {
+        std::cout << "order response start -----------------------\n";
+          const rmqt::Message &message = messageGuard.message();
+          std::cout << "order received. correlation Id: " << message.properties().correlationId << '\n';
+          OrderResponseMSG respMesg;
+          respMesg.ParseFromArray(message.payload(), message.payloadSize());
+          if(!respMesg.successful()){
+            std::cout << "The order was not successful\n";
+          } else {
+            std::cout << respMesg.amountfilled() << " shares were filled for a total cost of " << FormatAsMoney(respMesg.price()) << '\n';
+            if(respMesg.has_orderid()){
+              std::cout << "Order id: " << respMesg.orderid() << "\n";
+            } else {
+              std::cout << "filling the entire order\n";
+            }
+          }
+        std::cout << "order response end -----------------------\n";
+          messageGuard.ack();
+      });
+  if (!responsesConsumerResult) {
+    std::cerr << "Error creating connection: " << responsesConsumerResult.error()
+              << "\n";
+    return ret;
+  }
+  ret.responseConsumer = responsesConsumerResult.value();
+  ret.fillQueue =
+      topology.addQueue(id + ".orderFill", rmqt::AutoDelete::OFF, rmqt::Durable::ON);
+  topology.bind(exch, ret.fillQueue, id + ".orderFill");
+  rmqt::Result<rmqa::Consumer> fillConsumerResult = vhost.createConsumer(
+      topology, ret.fillQueue,
+      [](rmqp::MessageGuard &messageGuard) {
+        std::cout << "order fill start ||||||||||||||||||||||\n";
+          const rmqt::Message &message = messageGuard.message();
+          OrderFillMSG orderFillMSG;
+          orderFillMSG.ParseFromArray(message.payload(), message.payloadSize());
+          std::cout << "order filled. order id: " << orderFillMSG.orderid() << '\n';
+          std::cout << orderFillMSG.filled() << " shares were filled.\n";
+        std::cout << "order fill end ||||||||||||||||||||||\n";
+          messageGuard.ack();
+      });
+  if (!fillConsumerResult) {
+    std::cerr << "Error creating connection: " << fillConsumerResult.error()
+              << "\n";
+    return ret;
+  }
+  ret.fillConsumer = fillConsumerResult.value();
+  return ret;
+}
+
+bool sendOrderToMarket(rmqa::Producer &producer, const bsl::string &id,
+                       const bsl::string &correlationId, MarketOrder order) {
+  OrderMSG orderMSG = order.toOrderMSG();
+  bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
+      bsl::make_shared<bsl::vector<uint8_t>>();
+  messageToArray(orderMSG, *rawData);
+  rmqt::Properties properties;
+  properties.correlationId = correlationId;
+  properties.replyTo = id;
+  rmqt::Message message = rmqt::Message(rawData, properties);
+  if (!sendMessage(producer, message, "order")) {
+    return false;
+  }
+  return true;
 }
 
 int main(int argc, char **argv) {
@@ -104,7 +317,7 @@ int main(int argc, char **argv) {
   // }
   // amqp://localhost
   const bsl::string id = bsl::to_string(getId());
-  const char *const amqpuri = "amqp://localhost";//argv[1];
+  const char *const amqpuri = "amqp://localhost"; // argv[1];
   rmqa::RabbitContext rabbit;
 
   bsl::optional<rmqt::VHostInfo> vhostInfo =
@@ -134,9 +347,8 @@ int main(int argc, char **argv) {
   constexpr uint16_t maxOutstandingConfirms = 10;
 
   rmqa::Topology topology;
-  rmqt::ExchangeHandle exch =
-      topology.addPassiveExchange(ExchangeName);
-  if(exch.expired()){
+  rmqt::ExchangeHandle exch = topology.addPassiveExchange(ExchangeName);
+  if (exch.expired()) {
     std::cerr << "Server does not exist yet\n";
     return 1;
   }
@@ -147,46 +359,21 @@ int main(int argc, char **argv) {
               << "\n";
     return 1;
   }
-  rmqt::QueueHandle responseQueue = topology.addQueue(id, rmqt::AutoDelete::OFF,rmqt::Durable::ON);
-  topology.bind(exch, responseQueue, id);
-  
+  ListenStuff listenStuff{*vhost, exch, topology};
   bsl::shared_ptr<rmqa::Producer> producer = producerResult.value();
-  SignupMSG signupMSG;
-  signupMSG.set_name(username);
-  bsl::shared_ptr<bsl::vector<uint8_t>> rawData = bsl::make_shared<bsl::vector<uint8_t>>();
-  messageToArray(signupMSG,*rawData);
-  rmqt::Properties properties;
-  properties.correlationId=id;
-  properties.replyTo="activate_"+id;
-  std::cout << properties.correlationId << '\n';
-  rmqt::Message message = rmqt::Message(rawData,properties);
-  if (!sendMessage(*producer, message)) {
+  if (!registerWithMarket(listenStuff, *producer, username, id)) {
     return 1;
   }
-  bool activatd = false; 
-  rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost->createConsumer(
-      topology, responseQueue, [&activatd](rmqp::MessageGuard &messageGuard) {
-        const rmqt::Message &message = messageGuard.message();
-          bool success = handleInitialResponse(message);
-          messageGuard.ack();
-          if(!success){
-            std::exit(1);
-          }
-          activatd = true;
-      });
-  if (!activateConsumerResult) {
-    // A fatal error such as `exch` not being present in `topology`
-    // A disconnection, or  will never permanently fail an operation
-    std::cerr << "Error creating connection: " << activateConsumerResult.error()
-              << "\n";
+  auto listenHandles = startListeningToOrderResponses(listenStuff,id);
+  if(!(listenHandles.responseConsumer && listenHandles.fillConsumer)){
     return 1;
   }
-  [[maybe_unused]] bsl::shared_ptr<rmqa::Consumer> activateConsumer =
-      activateConsumerResult.value();
-
-  if (!producer->waitForConfirms(bsls::TimeInterval(5))) {
-    std::cerr << "Timeout expired\n";
+  sendOrderToMarket(*producer, id, "cor",
+                    MarketOrder("slugs", 10, 1000, false));
+  sendOrderToMarket(*producer, id, "cor", MarketOrder("slugs", 10, 1000, true));
+  std::cout << "Market confirmed\n";
+  while(true){
+    std::this_thread::sleep_for(std::chrono::seconds(5));
   }
-  activateConsumer->cancelAndDrain();
   return 0;
 }
