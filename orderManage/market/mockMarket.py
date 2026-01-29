@@ -17,8 +17,6 @@ pool = ConnectionPool(DATABASE_URL, min_size=2, max_size=10, kwargs={"row_factor
 def init_db():
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            # cur.execute("""DROP TABLE activeOrders""")
-            # cur.execute("""DROP TABLE users""")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS activeOrders(
                     id BIGSERIAL PRIMARY KEY,
@@ -157,4 +155,8 @@ channel.basic_qos(prefetch_count=5)
 channel.basic_consume(queue='order_queue', on_message_callback=on_order)
 channel.basic_consume(queue='signup_queue', on_message_callback=on_signup)
 
-channel.start_consuming()
+try:
+    channel.start_consuming()
+except KeyboardInterrupt:
+    print("Good bye")
+pool.close()
