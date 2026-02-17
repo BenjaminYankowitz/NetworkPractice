@@ -1,9 +1,18 @@
+#include "marketMessages.pb.h"
 #include <atomic>
+#include <bsl_memory.h>
+#include <bsl_optional.h>
+#include <bsl_vector.h>
 #include <bslstl_sharedptr.h>
 #include <bslstl_string.h>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
+#include <future>
+#include <iostream>
+#include <cstdint>
+#include <kafka/KafkaProducer.h>
+#include <kafka/Types.h>
 #include <memory>
 #include <mutex>
 #include <rmqa_connectionstring.h>
@@ -22,20 +31,66 @@
 #include <rmqt_properties.h>
 #include <rmqt_result.h>
 #include <rmqt_vhostinfo.h>
-
-#include <bsl_memory.h>
-#include <bsl_optional.h>
-#include <bsl_vector.h>
-
-#include "marketMessages.pb.h"
-#include <condition_variable>
-#include <cstdlib>
-#include <iostream>
-#include <random>
+#include <string>
 #include <sys/types.h>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 using namespace BloombergLP;
+
+template<class T>
+struct KafkaDeliveryCB {
+  KafkaDeliveryCB(T&& data) : data_(std::move(data)) {}
+
+  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
+                  const kafka::Error &error) {
+    if (!error) {
+      std::cout << "Message delivered: " << metadata.toString() << '\n';
+    } else {
+      std::cerr << "Message failed to be delivered: " << error.message()
+                << '\n';
+    }
+  }
+  static_assert(std::is_same_v<std::remove_reference_t<T>, T>);
+  T data_;
+};
+
+kafka::clients::producer::KafkaProducer initKafka(){
+  std::string brokers = "localhost:9092";
+  kafka::Properties props(
+      {{"bootstrap.servers", {brokers}}, {"enable.idempotence", {"true"}}});
+  return kafka::clients::producer::KafkaProducer(props);
+
+}
+namespace KafkaTopic {
+  static const kafka::Topic Signup = "signup";
+  static const kafka::Topic SignupResponse = "signup-response";
+  static const kafka::Topic Order = "order";
+  static const kafka::Topic OrderResponse = "order-response";
+  static const kafka::Topic OrderFill = "order-fill";
+}
+
+void kafkaSend(kafka::clients::producer::KafkaProducer &producer, bsl::shared_ptr<bsl::vector<uint8_t>> &&data,
+               kafka::Topic topic, kafka::Key key) {
+  producer.send(
+      kafka::clients::producer::ProducerRecord(
+          topic, key, kafka::Value(data->data(), data->size())),
+      KafkaDeliveryCB(std::move(data)));
+}
+
+template<class T>
+void kafkaSend(kafka::clients::producer::KafkaProducer &producer, T &message,
+               kafka::Topic topic, kafka::Key key) {
+  std::vector<uint8_t> rawData;
+    rawData.resize(message.ByteSizeLong());
+    message.SerializeWithCachedSizesToArray(rawData.data());
+  producer.send(
+      kafka::clients::producer::ProducerRecord(
+          topic, key, kafka::Value(rawData.data(), rawData.size())),
+      KafkaDeliveryCB(std::move(rawData)));
+}
+
 
 constexpr int maxSymbolSize = 5;
 struct MarketOrder {
@@ -107,11 +162,15 @@ std::ostream &operator<<(std::ostream &out, MarketOrder order) {
 
 class MarketState {
 public:
-  void processOrderToMarket(int64_t correlationId, const MarketOrder& order) {
+  void processOrderToMarket(int64_t correlationId, const MarketOrder &order,
+                            bsl::shared_ptr<bsl::vector<uint8_t>> &&rawData) {
+    kafkaSend(kafkaProducer,std::move(rawData),KafkaTopic::Order, kafka::NullKey);
     std::lock_guard lk(corrMutex);
     ordersInFlight.emplace(correlationId, order);
   }
-  void processOrderResponse(int64_t correlationId, const OrderResponseMSG& respMesg) {
+  void processOrderResponse(int64_t correlationId,
+                            const OrderResponseMSG &respMesg) {
+    kafkaSend(kafkaProducer,respMesg,KafkaTopic::OrderResponse,kafka::NullKey);
     std::cout << "order response start -----------------------\n";
     std::cout << "order received. correlation Id: " << correlationId << '\n';
     auto originOrderHandle = [&]() {
@@ -134,14 +193,16 @@ public:
       std::cout << "Order id: " << orderId << "\n";
       [&]() {
         std::lock_guard lk(idsMutex);
-        ordersOnMarket.emplace(orderId, std::make_unique<ActiveMarketOrder>(orginOrder, amountFilled));
+        ordersOnMarket.emplace(orderId, std::make_unique<ActiveMarketOrder>(
+                                            orginOrder, amountFilled));
       }();
     } else {
       assert(respMesg.amountfilled() == orginOrder.amount);
       std::cout << "filling the entire order\n";
     }
   }
-  void processOrderFill(const OrderFillMSG& orderFillMSG){
+  void processOrderFill(const OrderFillMSG &orderFillMSG) {
+    kafkaSend(kafkaProducer,orderFillMSG,KafkaTopic::OrderFill,kafka::NullKey);
     int64_t numFilled = orderFillMSG.filled();
     int64_t orderId = orderFillMSG.orderid();
     std::cout << "order fill start ||||||||||||||||||||||\n";
@@ -151,18 +212,26 @@ public:
     auto orderFound = [&]() {
       std::shared_lock lk(idsMutex);
       while (true) {
+        auto sleepTime = std::chrono::milliseconds(10);
         auto orderFoundIter = ordersOnMarket.find(orderId);
         if (orderFoundIter != ordersOnMarket.end()) {
           return orderFoundIter->second.get();
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        std::cout << "Sleep time\n"; // this is a hack IDK how to do it better, but there is definity a way.
+        std::this_thread::sleep_for(
+            sleepTime); // this is a hack IDK how to do it better, but there is
+                        // definity a way.
+        std::cout << "Sleep time\n";
+        sleepTime *= 2; // At least have exponential backoff to prevent
+                        // situation where (many) readers checking if written
+                        // prevent writer from ever writing.
       }
     }();
-      if((orderFound->filled+=numFilled)==orderFound->amount){ // safe because filled is atomic.
-        std::lock_guard lk(idsMutex);
-        ordersOnMarket.erase(orderId); 
-        // Not using iterator because could give up lock, another thread inserts causing rehash breaking the iterator, before relocking.
+    if ((orderFound->filled += numFilled) ==
+        orderFound->amount) { // safe because filled is atomic.
+      std::lock_guard lk(idsMutex);
+      ordersOnMarket.erase(orderId);
+      // Not using iterator because could give up lock, another thread inserts
+      // causing rehash breaking the iterator, before relocking.
     }
   }
   MarketState(const MarketState &) = delete;
@@ -174,7 +243,8 @@ private:
   std::shared_mutex idsMutex;
   std::unordered_map<int64_t, std::unique_ptr<ActiveMarketOrder>>
       ordersOnMarket;
-  
+  public:
+  kafka::clients::producer::KafkaProducer kafkaProducer = initKafka();
 };
 
 constexpr const char *ExchangeName = "MarketExchange";
@@ -221,45 +291,15 @@ void messageToArray(T message, bsl::vector<uint8_t> &buffer) {
   buffer.resize(size);
   message.SerializeWithCachedSizesToArray(buffer.data());
 }
-
-int64_t getId() {
-  std::random_device dev;
-  std::uniform_int_distribution<int64_t> dist;
-  return dist(dev);
-}
-
-bool handleInitialResponse(const rmqt::Message &message) {
-  SignupResponseMSG signupResponseMSG;
-  if (!signupResponseMSG.ParseFromArray(message.payload(),
-                                        message.payloadSize())) {
-    std::cerr << "Failed to parse message\n";
-    return false;
-  } else if (signupResponseMSG.result() == success) {
-    std::cout << "Connected\n";
-    return true;
-  } else if (signupResponseMSG.result() == tooLong) {
-    std::cerr << "Username too long\n";
-    return false;
-  } else if (signupResponseMSG.result() == taken) {
-    std::cerr << "Username taken\n";
-    return false;
-  } else if (signupResponseMSG.result() == malformed) {
-    std::cerr << "message malformed\n";
-    return false;
-  } else {
-    std::cerr << "Unknown error\n";
-    return false;
-  }
-}
-
 struct ListenStuff {
   rmqa::VHost &vhost;
   rmqt::ExchangeHandle &exch;
   rmqa::Topology &topology;
 };
 
-bool registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
-                        std::string_view username, const bsl::string &id) {
+static constexpr int64_t failureId = 0;
+int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
+                        std::string_view username, kafka::clients::producer::KafkaProducer& kafkaProducer) {
   auto &[vhost, exch, topology] = listenStuff;
   SignupMSG signupMSG;
   signupMSG.set_name(username);
@@ -267,60 +307,56 @@ bool registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(signupMSG, *rawData);
   rmqt::Properties properties;
-  properties.replyTo = id;
-  properties.correlationId = id;
   std::cout << properties.replyTo << '\n';
   rmqt::Message message = rmqt::Message(rawData, properties);
-  rmqt::QueueHandle responseQueue = topology.addQueue(
-      id + ".activate", rmqt::AutoDelete::ON, rmqt::Durable::ON);
-  topology.bind(exch, responseQueue, id + ".activate");
-  std::condition_variable cv;
-  std::mutex m;
-  bool didQueue = true;
-  bool queueRet = false;
+  rmqt::QueueHandle responseQueue = topology.addQueue("",rmqt::AutoDelete::ON);
+  properties.replyTo = responseQueue.lock()->name();
+  topology.bind(exch, responseQueue, "activate");
+  std::promise<int64_t> setUpPromise;
+  std::future<int64_t> setUpFuture = setUpPromise.get_future();
   rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
       topology, responseQueue,
-      [&cv, &m, &didQueue, &queueRet](rmqp::MessageGuard &messageGuard) {
-        {
-          std::lock_guard lk(m);
-          const rmqt::Message &message = messageGuard.message();
-          bool success = handleInitialResponse(message);
-          messageGuard.ack();
-          if (!success) {
-            didQueue = false;
-          }
-          queueRet = true;
+      [&setUpPromise](rmqp::MessageGuard &messageGuard) {
+        const rmqt::Message &message = messageGuard.message();
+        SignupResponseMSG signupResponseMSG;
+        if (!signupResponseMSG.ParseFromArray(message.payload(),
+                                              message.payloadSize())) {
+          std::cerr << "Failed to parse message\n";
+          setUpPromise.set_value(failureId);
+        } else {
+          setUpPromise.set_value(signupResponseMSG.assignedid());
         }
-        cv.notify_one();
+        messageGuard.ack(); // don't do this until everything handled properly.
       });
   if (!activateConsumerResult) {
     // A fatal error such as `exch` not being present in `topology`
     // A disconnection, or  will never permanently fail an operation
     std::cerr << "Error creating connection: " << activateConsumerResult.error()
               << "\n";
-    return 1;
+    return failureId;
   }
   bsl::shared_ptr<rmqa::Consumer> activateConsumer =
       activateConsumerResult.value();
   if (!sendMessage(producer, message, "signup")) {
-    return 1;
+    return failureId;
   }
+  kafkaSend(kafkaProducer,std::move(rawData),KafkaTopic::Signup, kafka::NullKey);
   if (!producer.waitForConfirms(bsls::TimeInterval(5))) {
     std::cerr << "Timeout expired for sending message to signup to market\n";
   }
 
-  std::unique_lock lk(m);
-  cv.wait_for(lk, std::chrono::seconds(5), [&queueRet]() { return queueRet; });
   activateConsumer->cancelAndDrain();
-  if (!queueRet) {
+  if (setUpFuture.wait_for(std::chrono::seconds(5)) ==
+      std::future_status::timeout) {
+    std::cerr << "Did not add to queue\n";
+    return failureId;
+  }
+  int64_t queueRet = setUpFuture.get();
+  if (queueRet==failureId) {
     std::cerr << "Market did not confirm\n";
-    return false;
+    return failureId;
   }
-  if (!didQueue) {
-    std::cerr << "Could not add to queue\n";
-    return false;
-  }
-  return true;
+  return queueRet;
 }
 
 struct OrderListenhandle {
@@ -393,7 +429,7 @@ bool sendOrderToMarket(rmqa::Producer &producer, const bsl::string &id,
   if (!sendMessage(producer, message, "order")) {
     return false;
   }
-  marketState.processOrderToMarket(correlationId, order);
+  marketState.processOrderToMarket(correlationId, order, std::move(rawData));
   return true;
 }
 
@@ -405,7 +441,6 @@ int main(int argc, char **argv) {
   // }
   // amqp://localhost
   MarketState marketState;
-  const bsl::string id = bsl::to_string(getId());
   const char *const amqpuri = "amqp://localhost"; // argv[1];
   rmqa::RabbitContext rabbit;
 
@@ -450,7 +485,8 @@ int main(int argc, char **argv) {
   }
   ListenStuff listenStuff{*vhost, exch, topology};
   bsl::shared_ptr<rmqa::Producer> producer = producerResult.value();
-  if (!registerWithMarket(listenStuff, *producer, username, id)) {
+  const auto id = bsl::to_string(registerWithMarket(listenStuff, *producer, username,marketState.kafkaProducer));
+  if (id.empty()) {
     return 1;
   }
   auto listenHandles =

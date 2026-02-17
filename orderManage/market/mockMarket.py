@@ -31,7 +31,7 @@ def init_db():
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users(
-                    id BIGINT PRIMARY KEY,
+                    id BIGSERIAL PRIMARY KEY,
                     name VARCHAR(20) UNIQUE
                 )
             """)
@@ -130,24 +130,18 @@ def on_signup(ch, method, props, body):
     if(props.reply_to == None):
         ch.basic_ack(delivery_tag=method.delivery_tag)
         return
-    id = props.reply_to
+    retQueue = props.reply_to
     message = marketMessages_pb2.SignupMSG()
     message.ParseFromString(body)
     name = message.name
     response = marketMessages_pb2.SignupResponseMSG()
-    response.result = marketMessages_pb2.SignupResponseEnum.success
-    print("id:",id,"name:",name)
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            try:
-                cur.execute("INSERT INTO users (id, name) VALUES (%s, %s)",(id, name))
-            except psycopg.errors.UniqueViolation: 
-                response.result = marketMessages_pb2.SignupResponseEnum.taken
-            except psycopg.errors.NotNullViolation:
-                response.result = marketMessages_pb2.SignupResponseEnum.malformed
+            cur.execute("INSERT INTO users (name) VALUES (%s) RETURNING id",(name))
+    response.assignedId = int(cur.fetchone()['id'])
+    print("id:",id,"name:",name)
     ch.basic_publish(exchange=exchangeName(),
-                     routing_key=id+".activate",
-                     properties=pika.BasicProperties(correlation_id=id),
+                     routing_key=retQueue,
                      body=response.SerializeToString())
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

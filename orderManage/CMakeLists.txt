@@ -2,5 +2,8 @@ cmake_minimum_required(VERSION 3.25)
 project(OrderManage LANGUAGES CXX)
 
 find_package(Protobuf CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka)
+add_subdirectory(kafka)
 add_subdirectory(market)
 add_subdirectory(orderManage)

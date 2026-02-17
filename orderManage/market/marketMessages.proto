@@ -23,13 +23,6 @@ message SignupMSG{
   string name = 1;
 }
 
-enum SignupResponseEnum {
-  success = 0;
-  tooLong = 1;
-  taken = 2;
-  malformed = 3;
-}
-
 message SignupResponseMSG {
-  SignupResponseEnum result = 1;
+  int64 assignedId = 1;
 }
