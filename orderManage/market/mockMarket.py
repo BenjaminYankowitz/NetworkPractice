@@ -128,20 +128,25 @@ def on_order(ch, method, props, body):
 
 def on_signup(ch, method, props, body):
     if(props.reply_to == None):
+        print("signup with no return address")
         ch.basic_ack(delivery_tag=method.delivery_tag)
         return
-    retQueue = props.reply_to
     message = marketMessages_pb2.SignupMSG()
     message.ParseFromString(body)
     name = message.name
     response = marketMessages_pb2.SignupResponseMSG()
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO users (name) VALUES (%s) RETURNING id",(name))
-    response.assignedId = int(cur.fetchone()['id'])
-    print("id:",id,"name:",name)
+            try:
+                cur.execute("INSERT INTO users (name) VALUES (%s) RETURNING id",(name,))
+                response.assignedId = int(cur.fetchone()["id"])
+                print("id:",response.assignedId,"name:",name)
+            except psycopg.errors.UniqueViolation:
+                response.assignedId = 0
+                print("name:", name, " already in use")
+    print("replyto:",props.reply_to)
     ch.basic_publish(exchange=exchangeName(),
-                     routing_key=retQueue,
+                     routing_key=props.reply_to,
                      body=response.SerializeToString())
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

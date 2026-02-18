@@ -1,4 +1,5 @@
 #include "marketMessages.pb.h"
+#include "printMarketProto.h"
 #include <atomic>
 #include <bsl_memory.h>
 #include <bsl_optional.h>
@@ -15,6 +16,7 @@
 #include <kafka/Types.h>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <rmqa_connectionstring.h>
 #include <rmqa_consumer.h>
 #include <rmqa_producer.h>
@@ -24,6 +26,7 @@
 #include <rmqp_consumer.h>
 #include <rmqp_producer.h>
 #include <rmqt_confirmresponse.h>
+#include <rmqt_consumerconfig.h>
 #include <rmqt_exchange.h>
 #include <rmqt_exchangetype.h>
 #include <rmqt_fieldvalue.h>
@@ -34,14 +37,12 @@
 #include <string>
 #include <sys/types.h>
 #include <thread>
-#include <type_traits>
 #include <unordered_map>
 #include <utility>
 using namespace BloombergLP;
 
-template<class T>
-struct KafkaDeliveryCB {
-  KafkaDeliveryCB(T&& data) : data_(std::move(data)) {}
+struct KafkaDeliveryCBSharedData {
+  KafkaDeliveryCBSharedData(bsl::shared_ptr<bsl::vector<uint8_t>>&& data) : data_(std::move(data)) {}
 
   void operator()(const kafka::clients::producer::RecordMetadata &metadata,
                   const kafka::Error &error) {
@@ -52,8 +53,23 @@ struct KafkaDeliveryCB {
                 << '\n';
     }
   }
-  static_assert(std::is_same_v<std::remove_reference_t<T>, T>);
-  T data_;
+  bsl::shared_ptr<bsl::vector<uint8_t>> data_;
+};
+
+struct KafkaDeliveryCBSingleData {
+  KafkaDeliveryCBSingleData(uint8_t* data) : data_(data) {}
+
+  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
+                  const kafka::Error &error) {
+    if (!error) {
+      std::cout << "Message delivered: " << metadata.toString() << '\n';
+    } else {
+      std::cerr << "Message failed to be delivered: " << error.message()
+                << '\n';
+    }
+    delete[] data_;
+  }
+  uint8_t* data_;
 };
 
 kafka::clients::producer::KafkaProducer initKafka(){
@@ -73,22 +89,23 @@ namespace KafkaTopic {
 
 void kafkaSend(kafka::clients::producer::KafkaProducer &producer, bsl::shared_ptr<bsl::vector<uint8_t>> &&data,
                kafka::Topic topic, kafka::Key key) {
+                auto val = kafka::Value(data->data(), data->size());
   producer.send(
       kafka::clients::producer::ProducerRecord(
-          topic, key, kafka::Value(data->data(), data->size())),
-      KafkaDeliveryCB(std::move(data)));
+          topic, key, val),
+      KafkaDeliveryCBSharedData(std::move(data)));
 }
 
 template<class T>
 void kafkaSend(kafka::clients::producer::KafkaProducer &producer, T &message,
                kafka::Topic topic, kafka::Key key) {
-  std::vector<uint8_t> rawData;
-    rawData.resize(message.ByteSizeLong());
-    message.SerializeWithCachedSizesToArray(rawData.data());
+  auto len = message.ByteSizeLong();
+  uint8_t* rawData = new uint8_t[len];
+  message.SerializeWithCachedSizesToArray(rawData);
   producer.send(
       kafka::clients::producer::ProducerRecord(
-          topic, key, kafka::Value(rawData.data(), rawData.size())),
-      KafkaDeliveryCB(std::move(rawData)));
+          topic, key, kafka::Value(rawData, len)),
+      KafkaDeliveryCBSingleData(rawData));
 }
 
 
@@ -134,27 +151,6 @@ struct ActiveMarketOrder {
   bool buySide;
 };
 
-class FormatAsMoney {
-public:
-  FormatAsMoney(long amnt) : amnt_(amnt) {}
-  friend std::ostream &operator<<(std::ostream &out, FormatAsMoney money);
-
-private:
-  int amnt_;
-};
-std::ostream &operator<<(std::ostream &out, FormatAsMoney money) {
-  int dollars = money.amnt_ / 100;
-  int cents = money.amnt_ % 100;
-  out << "$" << dollars;
-  if (cents != 0) {
-    out << '.';
-    if (cents < 10) {
-      out << '0';
-    }
-    out << cents;
-  }
-  return out;
-}
 std::ostream &operator<<(std::ostream &out, MarketOrder order) {
   return out << (order.buySide ? "Buy" : "Sell") << "ing " << order.amount
              << " of " << order.symbol << " for " << FormatAsMoney(order.price);
@@ -297,6 +293,12 @@ struct ListenStuff {
   rmqa::Topology &topology;
 };
 
+bsl::string uri(){
+  std::random_device dev;
+  std::uniform_int_distribution<uint64_t> dist;
+  return bsl::to_string(dist(dev))+'-'+bsl::to_string(dist(dev));
+}
+
 static constexpr int64_t failureId = 0;
 int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
                         std::string_view username, kafka::clients::producer::KafkaProducer& kafkaProducer) {
@@ -307,13 +309,13 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(signupMSG, *rawData);
   rmqt::Properties properties;
-  std::cout << properties.replyTo << '\n';
-  rmqt::Message message = rmqt::Message(rawData, properties);
-  rmqt::QueueHandle responseQueue = topology.addQueue("",rmqt::AutoDelete::ON);
+  rmqt::QueueHandle responseQueue = topology.addQueue(uri(), rmqt::AutoDelete::ON, rmqt::Durable::ON);
   properties.replyTo = responseQueue.lock()->name();
-  topology.bind(exch, responseQueue, "activate");
+  topology.bind(exch, responseQueue, properties.replyTo.value());
   std::promise<int64_t> setUpPromise;
   std::future<int64_t> setUpFuture = setUpPromise.get_future();
+  auto config = rmqt::ConsumerConfig();
+  config.setExclusiveFlag(rmqt::Exclusive::ON);
   rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
       topology, responseQueue,
       [&setUpPromise](rmqp::MessageGuard &messageGuard) {
@@ -327,7 +329,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
           setUpPromise.set_value(signupResponseMSG.assignedid());
         }
         messageGuard.ack(); // don't do this until everything handled properly.
-      });
+      },config);
   if (!activateConsumerResult) {
     // A fatal error such as `exch` not being present in `topology`
     // A disconnection, or  will never permanently fail an operation
@@ -335,8 +337,8 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
               << "\n";
     return failureId;
   }
-  bsl::shared_ptr<rmqa::Consumer> activateConsumer =
-      activateConsumerResult.value();
+  std::cout << "replyto: " << properties.replyTo << '\n';
+  rmqt::Message message = rmqt::Message(rawData, properties);
   if (!sendMessage(producer, message, "signup")) {
     return failureId;
   }
@@ -344,13 +346,12 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   if (!producer.waitForConfirms(bsls::TimeInterval(5))) {
     std::cerr << "Timeout expired for sending message to signup to market\n";
   }
-
-  activateConsumer->cancelAndDrain();
   if (setUpFuture.wait_for(std::chrono::seconds(5)) ==
       std::future_status::timeout) {
-    std::cerr << "Did not add to queue\n";
+    std::cerr << "Did not hear back from server\n";
     return failureId;
   }
+  activateConsumerResult.value()->cancelAndDrain();
   int64_t queueRet = setUpFuture.get();
   if (queueRet==failureId) {
     std::cerr << "Market did not confirm\n";
@@ -466,7 +467,6 @@ int main(int argc, char **argv) {
   bsl::shared_ptr<rmqa::VHost> vhost = rabbit.createVHostConnection(
       username, // Connection Name Visible in management UI
       vhostInfo.value());
-
   // How many messages can be awaiting confirmation before `send` blocks
   constexpr uint16_t maxOutstandingConfirms = 10;
 
@@ -485,10 +485,13 @@ int main(int argc, char **argv) {
   }
   ListenStuff listenStuff{*vhost, exch, topology};
   bsl::shared_ptr<rmqa::Producer> producer = producerResult.value();
-  const auto id = bsl::to_string(registerWithMarket(listenStuff, *producer, username,marketState.kafkaProducer));
-  if (id.empty()) {
+  const auto numId = registerWithMarket(listenStuff, *producer, username,marketState.kafkaProducer);
+  std::cout << numId << '\n';
+  if(numId==failureId){
+    std::cout << "Failed to register with market\n";
     return 1;
   }
+  const auto id = bsl::to_string(numId);
   auto listenHandles =
       startListeningToOrderResponses(listenStuff, id, marketState);
   if (!(listenHandles.responseConsumer && listenHandles.fillConsumer)) {
