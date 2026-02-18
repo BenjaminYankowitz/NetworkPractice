@@ -212,7 +212,7 @@ public:
         if (orderFoundIter != ordersOnMarket.end()) {
           return orderFoundIter->second.get();
         }
-        lk.release();
+        lk.unlock();
         std::this_thread::sleep_for(
             sleepTime); // this is a hack IDK how to do it better, but there is
                         // definity a way.

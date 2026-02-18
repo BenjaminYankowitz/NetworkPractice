@@ -93,10 +93,6 @@ def on_order(ch, method, props, body):
                 oPrice = oSide['price']
                 oQuantity = oSide['quantity']
                 oFilled = oSide['filled']
-                oId = int(oId)
-                oPrice = int(oPrice)
-                oQuantity = int(oQuantity)
-                oFilled = int(oFilled)
                 leftInOther = oQuantity-oFilled
                 numFilled = min(leftInOther,toFill)
                 toFill-=numFilled
@@ -104,11 +100,11 @@ def on_order(ch, method, props, body):
                 if(leftInOther==numFilled):
                     cur.execute("DELETE FROM activeOrders WHERE id = %s", (oId,))
                 else: 
-                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oSide.filled+numFilled,oId))    
+                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oFilled+numFilled,oId))    
                 orderFillMSG.orderID = oId
                 orderFillMSG.filled = numFilled
                 ch.basic_publish(exchange=exchangeName(),
-                            routing_key=oOwner+".orderFill",
+                            routing_key=str(oOwner)+".orderFill",
                             body=orderFillMSG.SerializeToString()) #this will still send if transaction fails.
                 if(toFill==0):
                     break
