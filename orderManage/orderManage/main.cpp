@@ -8,7 +8,6 @@
 #include <bslstl_string.h>
 #include <cassert>
 #include <chrono>
-#include <cstdint>
 #include <future>
 #include <iostream>
 #include <cstdint>
@@ -206,13 +205,14 @@ public:
     std::cout << numFilled << " shares were filled.\n";
     std::cout << "order fill end ||||||||||||||||||||||\n";
     auto orderFound = [&]() {
-      std::shared_lock lk(idsMutex);
+      auto sleepTime = std::chrono::milliseconds(10);
       while (true) {
-        auto sleepTime = std::chrono::milliseconds(10);
+        std::shared_lock lk(idsMutex);
         auto orderFoundIter = ordersOnMarket.find(orderId);
         if (orderFoundIter != ordersOnMarket.end()) {
           return orderFoundIter->second.get();
         }
+        lk.release();
         std::this_thread::sleep_for(
             sleepTime); // this is a hack IDK how to do it better, but there is
                         // definity a way.

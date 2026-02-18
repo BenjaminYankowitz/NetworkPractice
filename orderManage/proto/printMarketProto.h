@@ -9,7 +9,7 @@ public:
   friend std::ostream &operator<<(std::ostream &out, FormatAsMoney money);
 
 private:
-  int amnt_;
+  long amnt_;
 };
 inline std::ostream &operator<<(std::ostream &out, FormatAsMoney money) {
   int dollars = money.amnt_ / 100;

@@ -68,7 +68,7 @@ def on_order(ch, method, props, body):
             quantity = message.quantity
             if(buySide):
                 cur.execute("""
-                        SELECT (id,owner,price,quantity,filled) FROM activeOrders
+                        SELECT id,owner,price,quantity,filled FROM activeOrders
                         WHERE symbol=%s
                         AND buyside=False
                         AND price <= %s
@@ -76,7 +76,7 @@ def on_order(ch, method, props, body):
                         (symbol,price))
             else:
                 cur.execute("""
-                            SELECT (id,owner,price,quantity,filled) FROM activeOrders
+                            SELECT id,owner,price,quantity,filled FROM activeOrders
                             WHERE symbol=%s
                             AND buyside=TRUE
                             AND price >= %s
@@ -88,19 +88,23 @@ def on_order(ch, method, props, body):
             orderFillMSG = marketMessages_pb2.OrderFillMSG()
             print(res)
             for oSide in res:
-                (oId, oOwner, oPrice, oQuantity, oFilled) = oSide['row']
+                oId = oSide['id']
+                oOwner = oSide['owner']
+                oPrice = oSide['price']
+                oQuantity = oSide['quantity']
+                oFilled = oSide['filled']
                 oId = int(oId)
                 oPrice = int(oPrice)
                 oQuantity = int(oQuantity)
                 oFilled = int(oFilled)
                 leftInOther = oQuantity-oFilled
                 numFilled = min(leftInOther,toFill)
-                toFill-=leftInOther
+                toFill-=numFilled
                 totalCost+=numFilled*oPrice
                 if(leftInOther==numFilled):
                     cur.execute("DELETE FROM activeOrders WHERE id = %s", (oId,))
                 else: 
-                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oSide.filled+numFilled))    
+                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oSide.filled+numFilled,oId))    
                 orderFillMSG.orderID = oId
                 orderFillMSG.filled = numFilled
                 ch.basic_publish(exchange=exchangeName(),
