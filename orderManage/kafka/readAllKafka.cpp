@@ -72,7 +72,7 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
     auto records = consumer.poll(std::chrono::milliseconds(100));
     for (const auto &record : records) {
       const bool newMessage =
-          record.offset() >
+          record.offset() >=
           endOffsets.at(std::make_pair(record.topic(), record.partition()));
       if (settings.endAtCurrent && newMessage) {
         continue;
