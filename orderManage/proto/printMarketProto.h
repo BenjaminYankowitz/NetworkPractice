@@ -12,8 +12,8 @@ private:
   long amnt_;
 };
 inline std::ostream &operator<<(std::ostream &out, FormatAsMoney money) {
-  int dollars = money.amnt_ / 100;
-  int cents = money.amnt_ % 100;
+  auto dollars = money.amnt_ / 100;
+  auto cents = money.amnt_ % 100;
   out << "$" << dollars;
   if (cents != 0) {
     out << '.';
@@ -59,7 +59,7 @@ inline std::ostream& operator<<(std::ostream& out ,const OrderResponseMSG& msg){
   if(msg.has_orderid()){
     out << "\nid: " << msg.orderid();
   } else {
-    out << "\n fully filled";
+    out << "\nfully filled";
   }
   return out << '\n' << msg.amountfilled() << " shares filled for " << FormatAsMoney(msg.price());
 }
@@ -76,7 +76,7 @@ inline std::ostream& operator<<(std::ostream& out ,const SignupMSG& msg){
 //   int64 assignedId = 1;
 // }
 inline std::ostream& operator<<(std::ostream& out ,const SignupResponseMSG& msg){
-  return out << "Signup sucessfull with id: " << msg.assignedid();
+  return out << "Signup successful with id: " << msg.assignedid();
 }
 
 

@@ -222,8 +222,9 @@ public:
                         // prevent writer from ever writing.
       }
     }();
+    const auto amnt = orderFound->amount;
     if ((orderFound->filled += numFilled) ==
-        orderFound->amount) { // safe because filled is atomic.
+        amnt) { // safe because filled is atomic.
       std::lock_guard lk(idsMutex);
       ordersOnMarket.erase(orderId);
       // Not using iterator because could give up lock, another thread inserts
@@ -243,7 +244,7 @@ private:
   kafka::clients::producer::KafkaProducer kafkaProducer = initKafka();
 };
 
-constexpr const char *ExchangeName = "MarketExchange";
+constexpr std::string_view ExchangeName = "MarketExchange";
 
 bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message,
                  const bsl::string &routingKey) {
@@ -309,7 +310,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(signupMSG, *rawData);
   rmqt::Properties properties;
-  rmqt::QueueHandle responseQueue = topology.addQueue(uri(), rmqt::AutoDelete::ON, rmqt::Durable::ON);
+  rmqt::QueueHandle responseQueue = topology.addQueue(uri(), rmqt::AutoDelete::ON);
   properties.replyTo = responseQueue.lock()->name();
   topology.bind(exch, responseQueue, properties.replyTo.value());
   std::promise<int64_t> setUpPromise;
@@ -318,7 +319,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   config.setExclusiveFlag(rmqt::Exclusive::ON);
   rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
       topology, responseQueue,
-      [&setUpPromise](rmqp::MessageGuard &messageGuard) {
+      [&kafkaProducer, &setUpPromise](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
         SignupResponseMSG signupResponseMSG;
         if (!signupResponseMSG.ParseFromArray(message.payload(),
@@ -328,6 +329,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
         } else {
           setUpPromise.set_value(signupResponseMSG.assignedid());
         }
+        kafkaSend(kafkaProducer,signupResponseMSG,KafkaTopic::SignupResponse, kafka::NullKey);
         messageGuard.ack(); // don't do this until everything handled properly.
       },config);
   if (!activateConsumerResult) {
@@ -337,8 +339,8 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
               << "\n";
     return failureId;
   }
-  std::cout << "replyto: " << properties.replyTo << '\n';
   rmqt::Message message = rmqt::Message(rawData, properties);
+  // message.messageId()
   if (!sendMessage(producer, message, "signup")) {
     return failureId;
   }
@@ -427,10 +429,10 @@ bool sendOrderToMarket(rmqa::Producer &producer, const bsl::string &id,
   properties.correlationId = bsl::to_string(correlationId);
   properties.replyTo = id;
   rmqt::Message message = rmqt::Message(rawData, properties);
+  marketState.processOrderToMarket(correlationId, order, std::move(rawData)); // This needs fixing should really write it is going to attempt, then write once it works (or rollback on failure)
   if (!sendMessage(producer, message, "order")) {
     return false;
   }
-  marketState.processOrderToMarket(correlationId, order, std::move(rawData));
   return true;
 }
 

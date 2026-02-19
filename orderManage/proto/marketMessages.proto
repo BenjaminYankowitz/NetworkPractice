@@ -26,3 +26,10 @@ message SignupMSG{
 message SignupResponseMSG {
   int64 assignedId = 1;
 }
+
+
+
+
+message MSGConfirmMSG {
+  int64 messageID = 1;
+}

@@ -2,6 +2,7 @@
 #include "printMarketProto.h"
 #include <csignal>
 #include <iostream>
+#include <kafka/Interceptors.h>
 #include <kafka/KafkaConsumer.h>
 #include <kafka/Types.h>
 #include <string>
@@ -34,17 +35,17 @@ template <class T> void printValue(kafka::ConstBuffer value) {
   std::cout << msg << '\n';
 }
 
-void printValue(const std::string_view &key, kafka::ConstBuffer value) {
+void printValue(const std::string_view &topic, kafka::ConstBuffer value) {
   using namespace KafkaTopic;
-  if (key == Signup) {
+  if (topic == Signup) {
     printValue<SignupMSG>(value);
-  } else if (key == SignupResponse) {
+  } else if (topic == SignupResponse) {
     printValue<SignupResponseMSG>(value);
-  } else if (key == Order) {
+  } else if (topic == Order) {
     printValue<OrderMSG>(value);
-  } else if (key == OrderResponse) {
+  } else if (topic == OrderResponse) {
     printValue<OrderResponseMSG>(value);
-  } else if (key == OrderFill) {
+  } else if (topic == OrderFill) {
     printValue<OrderFillMSG>(value);
   } else {
     std::cout << "unknown key\n";
@@ -58,7 +59,6 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
 
   kafka::clients::consumer::KafkaConsumer consumer(props);
   consumer.subscribe(topics);
-
   if (settings.startFromBeginning) {
     consumer.seekToBeginning();
   }
@@ -71,9 +71,8 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
   while (running) {
     auto records = consumer.poll(std::chrono::milliseconds(100));
     for (const auto &record : records) {
-      const bool newMessage =
-          record.offset() >=
-          endOffsets.at(std::make_pair(record.topic(), record.partition()));
+      const auto endOffset = endOffsets.find(std::make_pair(record.topic(), record.partition()));
+      const bool newMessage = endOffset==endOffsets.end() || record.offset() >= endOffset->second;
       if (settings.endAtCurrent && newMessage) {
         continue;
       }
