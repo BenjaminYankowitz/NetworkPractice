@@ -38,15 +38,15 @@ template <class T> void printValue(kafka::ConstBuffer value) {
 void printValue(const std::string_view &topic, kafka::ConstBuffer value) {
   using namespace KafkaTopic;
   if (topic == Signup) {
-    printValue<SignupMSG>(value);
+    printValue<MarketProto::SignupMSG>(value);
   } else if (topic == SignupResponse) {
-    printValue<SignupResponseMSG>(value);
+    printValue<MarketProto::SignupResponseMSG>(value);
   } else if (topic == Order) {
-    printValue<OrderMSG>(value);
+    printValue<MarketProto::OrderMSG>(value);
   } else if (topic == OrderResponse) {
-    printValue<OrderResponseMSG>(value);
+    printValue<MarketProto::OrderResponseMSG>(value);
   } else if (topic == OrderFill) {
-    printValue<OrderFillMSG>(value);
+    printValue<MarketProto::OrderFillMSG>(value);
   } else {
     std::cout << "unknown key\n";
   }

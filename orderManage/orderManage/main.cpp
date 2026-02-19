@@ -117,8 +117,8 @@ struct MarketOrder {
     assert(amount > 0);
     assert(price >= 0);
   }
-  OrderMSG toOrderMSG() const {
-    OrderMSG ret;
+  MarketProto::OrderMSG toOrderMSG() const {
+    MarketProto::OrderMSG ret;
     ret.set_symbol(symbol);
     ret.set_quantity(amount);
     ret.set_price(price);
@@ -164,7 +164,7 @@ public:
     ordersInFlight.emplace(correlationId, order);
   }
   void processOrderResponse(int64_t correlationId,
-                            const OrderResponseMSG &respMesg) {
+                            const MarketProto::OrderResponseMSG &respMesg) {
     kafkaSend(kafkaProducer,respMesg,KafkaTopic::OrderResponse,kafka::NullKey);
     std::cout << "order response start -----------------------\n";
     std::cout << "order received. correlation Id: " << correlationId << '\n';
@@ -196,7 +196,7 @@ public:
       std::cout << "filling the entire order\n";
     }
   }
-  void processOrderFill(const OrderFillMSG &orderFillMSG) {
+  void processOrderFill(const MarketProto::OrderFillMSG &orderFillMSG) {
     kafkaSend(kafkaProducer,orderFillMSG,KafkaTopic::OrderFill,kafka::NullKey);
     int64_t numFilled = orderFillMSG.filled();
     int64_t orderId = orderFillMSG.orderid();
@@ -304,7 +304,7 @@ static constexpr int64_t failureId = 0;
 int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
                         std::string_view username, kafka::clients::producer::KafkaProducer& kafkaProducer) {
   auto &[vhost, exch, topology] = listenStuff;
-  SignupMSG signupMSG;
+  MarketProto::SignupMSG signupMSG;
   signupMSG.set_name(username);
   bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
       bsl::make_shared<bsl::vector<uint8_t>>();
@@ -321,7 +321,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
       topology, responseQueue,
       [&kafkaProducer, &setUpPromise](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
-        SignupResponseMSG signupResponseMSG;
+        MarketProto::SignupResponseMSG signupResponseMSG;
         if (!signupResponseMSG.ParseFromArray(message.payload(),
                                               message.payloadSize())) {
           std::cerr << "Failed to parse message\n";
@@ -384,7 +384,7 @@ OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
       [&marketState](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
         assert(message.properties().correlationId.has_value());
-        OrderResponseMSG respMesg;
+        MarketProto::OrderResponseMSG respMesg;
         respMesg.ParseFromArray(message.payload(), message.payloadSize());
         marketState.processOrderResponse(
             bsl::stoll(message.properties().correlationId.value()), respMesg);
@@ -403,7 +403,7 @@ OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
       topology, ret.fillQueue,
       [&marketState](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
-        OrderFillMSG orderFillMSG;
+        MarketProto::OrderFillMSG orderFillMSG;
         orderFillMSG.ParseFromArray(message.payload(), message.payloadSize());
         marketState.processOrderFill(orderFillMSG);
         messageGuard.ack();
@@ -421,7 +421,7 @@ bool sendOrderToMarket(rmqa::Producer &producer, const bsl::string &id,
                        AtomicCounter &correlationIdGenerator, MarketOrder order,
                        MarketState &marketState) {
   int64_t correlationId = correlationIdGenerator.get();
-  OrderMSG orderMSG = order.toOrderMSG();
+  MarketProto::OrderMSG orderMSG = order.toOrderMSG();
   bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(orderMSG, *rawData);

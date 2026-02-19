@@ -1,4 +1,5 @@
 syntax = "proto3";
+package MarketProto;
 
 message OrderMSG {
   string symbol = 1;

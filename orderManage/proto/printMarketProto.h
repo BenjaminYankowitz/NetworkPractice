@@ -31,7 +31,7 @@ inline std::ostream &operator<<(std::ostream &out, FormatAsMoney money) {
 //   int64 price = 4;
 // }
 
-inline std::ostream& operator<<(std::ostream& out ,const OrderMSG& msg){
+inline std::ostream& operator<<(std::ostream& out ,const MarketProto::OrderMSG& msg){
   return out << "Order:\nsymbol:" << msg.symbol() << "\nside: " << (msg.buyside() ? "buy" : "sell") << "\nquantity: " << msg.quantity() << "\nprice: " << msg.price();
 }
 
@@ -40,7 +40,7 @@ inline std::ostream& operator<<(std::ostream& out ,const OrderMSG& msg){
 //   int64 filled = 2;
 // }
 
-inline std::ostream& operator<<(std::ostream& out ,const OrderFillMSG& msg){
+inline std::ostream& operator<<(std::ostream& out ,const MarketProto::OrderFillMSG& msg){
   return out << "Order Fill:\nid: " << msg.orderid() << "\nfilled: " << msg.filled();
 }
 
@@ -51,7 +51,7 @@ inline std::ostream& operator<<(std::ostream& out ,const OrderFillMSG& msg){
 //   int64 price = 4;
 // }
 
-inline std::ostream& operator<<(std::ostream& out ,const OrderResponseMSG& msg){
+inline std::ostream& operator<<(std::ostream& out ,const MarketProto::OrderResponseMSG& msg){
   out << "Order Response";
   if(!msg.successful()){
     return out << "\nfailed";
@@ -68,14 +68,14 @@ inline std::ostream& operator<<(std::ostream& out ,const OrderResponseMSG& msg){
 //   string name = 1;
 // }
 
-inline std::ostream& operator<<(std::ostream& out ,const SignupMSG& msg){
+inline std::ostream& operator<<(std::ostream& out ,const MarketProto::SignupMSG& msg){
   return out << "Attempt to sign up with name: " << msg.name();
 }
 
 // message SignupResponseMSG {
 //   int64 assignedId = 1;
 // }
-inline std::ostream& operator<<(std::ostream& out ,const SignupResponseMSG& msg){
+inline std::ostream& operator<<(std::ostream& out ,const MarketProto::SignupResponseMSG& msg){
   return out << "Signup successful with id: " << msg.assignedid();
 }
 
