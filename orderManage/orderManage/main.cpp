@@ -244,7 +244,7 @@ private:
   kafka::clients::producer::KafkaProducer kafkaProducer = initKafka();
 };
 
-constexpr std::string_view ExchangeName = "MarketExchange";
+const bsl::string ExchangeName = "MarketExchange";
 
 bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message,
                  const bsl::string &routingKey) {
