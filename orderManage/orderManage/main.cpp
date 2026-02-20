@@ -110,9 +110,9 @@ void kafkaSend(kafka::clients::producer::KafkaProducer &producer, T &message,
 
 constexpr int maxSymbolSize = 5;
 struct MarketOrder {
-  MarketOrder(std::string_view symbolI, int64_t amountI, int64_t priceI,
+  MarketOrder(std::string symbolI, int64_t amountI, int64_t priceI,
               bool buySideI)
-      : symbol(symbolI), amount(amountI), price(priceI), buySide(buySideI) {
+      : symbol(std::move(symbolI)), amount(amountI), price(priceI), buySide(buySideI) {
     assert(symbol.size() <= maxSymbolSize);
     assert(amount > 0);
     assert(price >= 0);
@@ -125,7 +125,7 @@ struct MarketOrder {
     ret.set_buyside(buySide);
     return ret;
   }
-  std::string_view symbol;
+  std::string symbol;
   int64_t amount;
   int64_t price;
   bool buySide;
@@ -140,10 +140,10 @@ private:
 };
 
 struct ActiveMarketOrder {
-  ActiveMarketOrder(MarketOrder origin, int64_t initFilled)
-      : symbol(origin.symbol), amount(origin.amount), filled(initFilled),
+  ActiveMarketOrder(MarketOrder&& origin, int64_t initFilled)
+      : symbol(std::move(origin.symbol)), amount(origin.amount), filled(initFilled),
         price(origin.price), buySide(origin.buySide) {}
-  std::string_view symbol;
+  std::string symbol;
   int64_t amount;
   std::atomic<int64_t> filled;
   int64_t price;
@@ -189,7 +189,7 @@ public:
       [&]() {
         std::lock_guard lk(idsMutex);
         ordersOnMarket.emplace(orderId, std::make_unique<ActiveMarketOrder>(
-                                            orginOrder, amountFilled));
+                                            std::move(orginOrder), amountFilled));
       }();
     } else {
       assert(respMesg.amountfilled() == orginOrder.amount);
@@ -199,12 +199,16 @@ public:
   void processOrderFill(const MarketProto::OrderFillMSG &orderFillMSG) {
     kafkaSend(kafkaProducer,orderFillMSG,KafkaTopic::OrderFill,kafka::NullKey);
     int64_t numFilled = orderFillMSG.filled();
+    assert(numFilled>0);
     int64_t orderId = orderFillMSG.orderid();
     std::cout << "order fill start ||||||||||||||||||||||\n";
     std::cout << "order filled. order id: " << orderId << '\n';
     std::cout << numFilled << " shares were filled.\n";
     std::cout << "order fill end ||||||||||||||||||||||\n";
-    auto orderFound = [&]() {
+    auto orderFound = [&]() { 
+      //orderFound is safe as it can only be deleted once filled == amount (which cannot happend until we atomicly increment filled)
+      //This does trust that market is not overfilling us somehow though, but we are already doing that because we trust the order will show up eventually.
+      //This could be fixed
       auto sleepTime = std::chrono::milliseconds(10);
       while (true) {
         std::shared_lock lk(idsMutex);
