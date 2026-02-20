@@ -1,3 +1,4 @@
+#include "kafkaTopics.h"
 #include "marketMessages.pb.h"
 #include "printMarketProto.h"
 #include <atomic>
@@ -77,13 +78,6 @@ kafka::clients::producer::KafkaProducer initKafka(){
       {{"bootstrap.servers", {brokers}}, {"enable.idempotence", {"true"}}});
   return kafka::clients::producer::KafkaProducer(props);
 
-}
-namespace KafkaTopic {
-  static const kafka::Topic Signup = "signup";
-  static const kafka::Topic SignupResponse = "signup-response";
-  static const kafka::Topic Order = "order";
-  static const kafka::Topic OrderResponse = "order-response";
-  static const kafka::Topic OrderFill = "order-fill";
 }
 
 void kafkaSend(kafka::clients::producer::KafkaProducer &producer, bsl::shared_ptr<bsl::vector<uint8_t>> &&data,
@@ -317,9 +311,15 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   std::future<int64_t> setUpFuture = setUpPromise.get_future();
   auto config = rmqt::ConsumerConfig();
   config.setExclusiveFlag(rmqt::Exclusive::ON);
+  std::atomic<bool> signupResponseReceived{false};
   rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
       topology, responseQueue,
-      [&kafkaProducer, &setUpPromise](rmqp::MessageGuard &messageGuard) {
+      [&kafkaProducer, &setUpPromise, &signupResponseReceived](rmqp::MessageGuard &messageGuard) {
+        if (signupResponseReceived.exchange(true)) {
+          std::cerr << "Received unexpected duplicate signup response; ignoring.\n";
+          messageGuard.ack();
+          return;
+        }
         const rmqt::Message &message = messageGuard.message();
         MarketProto::SignupResponseMSG signupResponseMSG;
         if (!signupResponseMSG.ParseFromArray(message.payload(),

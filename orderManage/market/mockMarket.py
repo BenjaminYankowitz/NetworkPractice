@@ -57,6 +57,7 @@ channel.queue_bind(exchange=exchangeName(),
                     routing_key='signup')
 
 def on_order(ch, method, props, body):
+    fills_to_send = []
     with pool.connection() as conn:
         with conn.cursor() as cur:
             id = props.reply_to
@@ -85,7 +86,6 @@ def on_order(ch, method, props, body):
             res = cur.fetchall()
             toFill = quantity
             totalCost = 0
-            orderFillMSG = marketMessages_pb2.OrderFillMSG()
             print(res)
             for oSide in res:
                 oId = oSide['id']
@@ -99,16 +99,15 @@ def on_order(ch, method, props, body):
                 totalCost+=numFilled*oPrice
                 if(leftInOther==numFilled):
                     cur.execute("DELETE FROM activeOrders WHERE id = %s", (oId,))
-                else: 
-                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oFilled+numFilled,oId))    
+                else:
+                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oFilled+numFilled,oId))
+                orderFillMSG = marketMessages_pb2.OrderFillMSG()
                 orderFillMSG.orderID = oId
                 orderFillMSG.filled = numFilled
-                ch.basic_publish(exchange=exchangeName(),
-                            routing_key=str(oOwner)+".orderFill",
-                            body=orderFillMSG.SerializeToString()) #this will still send if transaction fails.
+                fills_to_send.append((str(oOwner)+".orderFill", orderFillMSG.SerializeToString()))
                 if(toFill==0):
                     break
-                
+
             response = marketMessages_pb2.OrderResponseMSG()
             response.amountFilled = quantity-toFill
             if(toFill>0):
@@ -119,12 +118,17 @@ def on_order(ch, method, props, body):
                 response.orderID = int(cur.fetchone()['id'])
             response.successful = True
             response.price = totalCost
-            print(props.reply_to+".orderResponse")
-            ch.basic_publish(exchange=exchangeName(),
-                            routing_key=props.reply_to+".orderResponse",
-                            properties=pika.BasicProperties(correlation_id = props.correlation_id),
-                            body=response.SerializeToString())
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+    # DB transaction committed; publish messages now
+    for routing_key, fill_body in fills_to_send:
+        ch.basic_publish(exchange=exchangeName(),
+                    routing_key=routing_key,
+                    body=fill_body)
+    print(props.reply_to+".orderResponse")
+    ch.basic_publish(exchange=exchangeName(),
+                    routing_key=props.reply_to+".orderResponse",
+                    properties=pika.BasicProperties(correlation_id = props.correlation_id),
+                    body=response.SerializeToString())
+    ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def on_signup(ch, method, props, body):
     if(props.reply_to == None):
