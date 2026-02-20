@@ -1,22 +1,10 @@
-#include "kafkaTopics.h"
-#include "marketMessages.pb.h"
-#include "printMarketProto.h"
-#include <atomic>
 #include <bsl_memory.h>
 #include <bsl_optional.h>
 #include <bsl_vector.h>
 #include <bslstl_sharedptr.h>
 #include <bslstl_string.h>
-#include <cassert>
-#include <chrono>
-#include <future>
-#include <iostream>
-#include <cstdint>
 #include <kafka/KafkaProducer.h>
 #include <kafka/Types.h>
-#include <memory>
-#include <mutex>
-#include <random>
 #include <rmqa_connectionstring.h>
 #include <rmqa_consumer.h>
 #include <rmqa_producer.h>
@@ -34,11 +22,23 @@
 #include <rmqt_properties.h>
 #include <rmqt_result.h>
 #include <rmqt_vhostinfo.h>
-#include <string>
 #include <sys/types.h>
+#include <cassert>
+#include <cstdint>
+#include <atomic>
+#include <string>
+#include <memory>
+#include <mutex>
+#include <random>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <chrono>
+#include <future>
+#include <iostream>
+#include "kafkaTopics.h"
+#include "marketMessages.pb.h"
+#include "printMarketProto.h"
 using namespace BloombergLP;
 
 struct KafkaDeliveryCBSharedData {
