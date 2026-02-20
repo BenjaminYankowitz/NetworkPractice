@@ -199,32 +199,36 @@ public:
     std::cout << "order filled. order id: " << orderId << '\n';
     std::cout << numFilled << " shares were filled.\n";
     std::cout << "order fill end ||||||||||||||||||||||\n";
-    auto orderFound = [&]() { 
-      //orderFound is safe as it can only be deleted once filled == amount (which cannot happend until we atomicly increment filled)
-      //This does trust that market is not overfilling us somehow though, but we are already doing that because we trust the order will show up eventually.
-      //This could be fixed
+    auto orderFound = [&]() -> std::shared_ptr<ActiveMarketOrder> { 
+      auto totalSleep = std::chrono::milliseconds(0);
       auto sleepTime = std::chrono::milliseconds(10);
       while (true) {
         std::shared_lock lk(idsMutex);
         auto orderFoundIter = ordersOnMarket.find(orderId);
         if (orderFoundIter != ordersOnMarket.end()) {
-          return orderFoundIter->second.get();
+          return orderFoundIter->second;
         }
         lk.unlock();
-        std::this_thread::sleep_for(
-            sleepTime); // this is a hack IDK how to do it better, but there is
-                        // definity a way.
+        std::this_thread::sleep_for(sleepTime); 
         std::cout << "Sleep time\n";
-        sleepTime *= 2; // At least have exponential backoff to prevent
+        totalSleep+=sleepTime;
+        if(totalSleep>std::chrono::seconds(5)){
+          return nullptr;
+        }
+        sleepTime *= 2; // Exponential backoff to prevent
                         // situation where (many) readers checking if written
                         // prevent writer from ever writing.
       }
     }();
+    if(!orderFound){
+      assert(false); // add 
+    }
     const auto amnt = orderFound->amount;
-    if ((orderFound->filled += numFilled) ==
+    if ((orderFound->filled += numFilled) >=
         amnt) { // safe because filled is atomic.
       std::lock_guard lk(idsMutex);
       ordersOnMarket.erase(orderId);
+      assert(orderFound->filled == amnt);
       // Not using iterator because could give up lock, another thread inserts
       // causing rehash breaking the iterator, before relocking.
     }
@@ -236,7 +240,7 @@ private:
   std::mutex corrMutex;
   std::unordered_map<int64_t, MarketOrder> ordersInFlight;
   std::shared_mutex idsMutex;
-  std::unordered_map<int64_t, std::unique_ptr<ActiveMarketOrder>>
+  std::unordered_map<int64_t, std::shared_ptr<ActiveMarketOrder>>
       ordersOnMarket;
   public:
   kafka::clients::producer::KafkaProducer kafkaProducer = initKafka();
