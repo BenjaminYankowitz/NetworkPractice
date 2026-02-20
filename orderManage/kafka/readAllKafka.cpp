@@ -1,3 +1,4 @@
+#include "kafkaTopics.h"
 #include "marketMessages.pb.h"
 #include "printMarketProto.h"
 #include <csignal>
@@ -10,14 +11,6 @@
 static std::atomic_bool running = true;
 
 static void sigterm(int) { running = false; }
-
-namespace KafkaTopic { // create new header file shared with order manage
-static const kafka::Topic Signup = "signup";
-static const kafka::Topic SignupResponse = "signup-response";
-static const kafka::Topic Order = "order";
-static const kafka::Topic OrderResponse = "order-response";
-static const kafka::Topic OrderFill = "order-fill";
-} // namespace KafkaTopic
 
 struct Settings {
   bool startFromBeginning = false;

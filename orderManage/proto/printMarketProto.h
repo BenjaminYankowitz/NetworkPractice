@@ -12,9 +12,16 @@ private:
   long amnt_;
 };
 inline std::ostream &operator<<(std::ostream &out, FormatAsMoney money) {
-  auto dollars = money.amnt_ / 100;
-  auto cents = money.amnt_ % 100;
-  out << "$" << dollars;
+  long amnt = money.amnt_;
+  if (amnt < 0) {
+    out << "$-";
+    amnt = -amnt;
+  } else {
+    out << "$";
+  }
+  auto dollars = amnt / 100;
+  auto cents = amnt % 100;
+  out << dollars;
   if (cents != 0) {
     out << '.';
     if (cents < 10) {
