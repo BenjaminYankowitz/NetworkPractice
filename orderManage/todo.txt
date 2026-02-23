@@ -1,3 +1,4 @@
 1. (main.cpp:224) Deal with orphaned order response
 
 2. Do two phase kafka write, stating intention then success.
+   This involves Some sort of message id to give indepodence in case of write to kafka, write to rabbitmq, then crash before second write to kafka.
