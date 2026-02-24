@@ -358,7 +358,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   }
   if (setUpFuture.wait_for(std::chrono::seconds(5)) ==
       std::future_status::timeout) {
-    std::cerr << "Did not hear back from server\n";
+    std::cerr << "Did not hear back from market\n";
     return failureId;
   }
   activateConsumerResult.value()->cancelAndDrain();
