@@ -1,16 +1,11 @@
 #include "marketState.h"
+#include "marketMessages.pb.h"
+#include "kafkaTopics.h"
 #include <bsl_memory.h>
 #include <bsl_optional.h>
 #include <bsl_vector.h>
 #include <bslstl_sharedptr.h>
 #include <bslstl_string.h>
-#include <chrono>
-#include <cstring>
-#include <future>
-#include <iostream>
-#include <string>
-#include <thread>
-#include <random>
 #include <kafka/KafkaProducer.h>
 #include <kafka/Types.h>
 #include <rmqa_connectionstring.h>
@@ -30,6 +25,17 @@
 #include <rmqt_properties.h>
 #include <rmqt_result.h>
 #include <rmqt_vhostinfo.h>
+#include <sys/types.h>
+#include <cassert>
+#include <atomic>
+#include <string>
+#include <memory>
+#include <random>
+#include <thread>
+#include <utility>
+#include <chrono>
+#include <future>
+#include <iostream>
 using namespace BloombergLP;
 
 struct KafkaDeliveryCBSharedData {
@@ -201,7 +207,7 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   }
   if (setUpFuture.wait_for(std::chrono::seconds(5)) ==
       std::future_status::timeout) {
-    std::cerr << "Did not hear back from server\n";
+    std::cerr << "Did not hear back from market\n";
     return failureId;
   }
   activateConsumerResult.value()->cancelAndDrain();

@@ -15,7 +15,6 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -27,9 +26,9 @@ using KafkaSendFn =
 constexpr int maxSymbolSize = 5;
 
 struct MarketOrder {
-  MarketOrder(std::string_view symbolI, int64_t amountI, int64_t priceI,
+  MarketOrder(std::string symbolI, int64_t amountI, int64_t priceI,
               bool buySideI)
-      : symbol(symbolI), amount(amountI), price(priceI), buySide(buySideI) {
+      : symbol(std::move(symbolI)), amount(amountI), price(priceI), buySide(buySideI) {
     assert(symbol.size() <= maxSymbolSize);
     assert(amount > 0);
     assert(price >= 0);
@@ -42,7 +41,7 @@ struct MarketOrder {
     ret.set_buyside(buySide);
     return ret;
   }
-  std::string_view symbol;
+  std::string symbol;
   int64_t amount;
   int64_t price;
   bool buySide;
@@ -57,10 +56,10 @@ private:
 };
 
 struct ActiveMarketOrder {
-  ActiveMarketOrder(MarketOrder origin, int64_t initFilled)
-      : symbol(origin.symbol), amount(origin.amount), filled(initFilled),
+  ActiveMarketOrder(MarketOrder&& origin, int64_t initFilled)
+      : symbol(std::move(origin.symbol)), amount(origin.amount), filled(initFilled),
         price(origin.price), buySide(origin.buySide) {}
-  std::string_view symbol;
+  std::string symbol;
   int64_t amount;
   std::atomic<int64_t> filled;
   int64_t price;
@@ -115,7 +114,7 @@ public:
       std::cout << "Order id: " << orderId << "\n";
       std::lock_guard lk(idsMutex);
       ordersOnMarket.emplace(orderId, std::make_unique<ActiveMarketOrder>(
-                                          orginOrder, amountFilled));
+                                          std::move(orginOrder), amountFilled));
     } else {
       assert(respMesg.amountfilled() == orginOrder.amount);
     }
@@ -129,25 +128,35 @@ public:
       d_kafkaSend(buf.data(), msgLen, KafkaTopic::OrderFill);
     }
     int64_t numFilled = orderFillMSG.filled();
+    assert(numFilled>0);
     int64_t orderId = orderFillMSG.orderid();
-    auto orderFound = [&]() {
+    auto orderFound = [&]() -> std::shared_ptr<ActiveMarketOrder> {
+      auto totalSleep = std::chrono::milliseconds(0);
       auto sleepTime = std::chrono::milliseconds(10);
       while (true) {
         std::shared_lock lk(idsMutex);
         auto orderFoundIter = ordersOnMarket.find(orderId);
         if (orderFoundIter != ordersOnMarket.end()) {
-          return orderFoundIter->second.get();
+          return orderFoundIter->second;
         }
         lk.unlock();
-        std::this_thread::sleep_for(sleepTime);
+        std::this_thread::sleep_for(sleepTime); 
         std::cout << "Sleep time\n";
+        totalSleep+=sleepTime;
+        if(totalSleep>std::chrono::seconds(5)){
+          return nullptr;
+        }
         sleepTime *= 2;
       }
     }();
+    if(!orderFound){
+      assert(false); // add 
+    }
     const auto amnt = orderFound->amount;
     if ((orderFound->filled += numFilled) == amnt) {
       std::lock_guard lk(idsMutex);
       ordersOnMarket.erase(orderId);
+      assert(orderFound->filled == amnt);
     }
   }
 
@@ -183,6 +192,6 @@ private:
   std::mutex corrMutex;
   std::unordered_map<int64_t, MarketOrder> ordersInFlight;
   std::shared_mutex idsMutex;
-  std::unordered_map<int64_t, std::unique_ptr<ActiveMarketOrder>>
+  std::unordered_map<int64_t, std::shared_ptr<ActiveMarketOrder>>
       ordersOnMarket;
 };

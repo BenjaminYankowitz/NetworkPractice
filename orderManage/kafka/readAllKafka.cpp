@@ -49,9 +49,11 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
                       const std::set<std::string> &topics, Settings settings) {
   const kafka::Properties props(
       {{"bootstrap.servers", {brokers}}, {"group.id", {group_id}}});
-
+  std::cout << "A\n";
   kafka::clients::consumer::KafkaConsumer consumer(props);
+  std::cout << "B\n";
   consumer.subscribe(topics);
+  std::cout << "C\n";
   if (settings.startFromBeginning) {
     consumer.seekToBeginning();
   }
@@ -61,6 +63,7 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
   }
   std::cout << "' (Ctrl-C to quit)...\n";
   auto endOffsets = consumer.endOffsets(consumer.assignment());
+  std::cout << "D\n";
   while (running) {
     auto records = consumer.poll(std::chrono::milliseconds(100));
     for (const auto &record : records) {
