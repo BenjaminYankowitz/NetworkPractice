@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(OrderManage LANGUAGES CXX)
 
+enable_testing()
 find_package(Protobuf CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka)

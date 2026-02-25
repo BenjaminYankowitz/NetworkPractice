@@ -3,6 +3,7 @@
     "name": "ordermanage",
     "version": "1.0.0",
     "dependencies": [
-      "rmqcpp"
+      "rmqcpp",
+      "gtest"
     ]
 }

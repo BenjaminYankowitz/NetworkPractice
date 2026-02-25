@@ -1,3 +1,6 @@
 1. (main.cpp:207-232) stop trusting market won't do something weird
 
 2. Do two phase kafka write, stating intention then success.
+   This involves Some sort of message id to give indepodence in case of write to kafka, write to rabbitmq, then crash before second write to kafka.
+
+3. Kafka log compaction

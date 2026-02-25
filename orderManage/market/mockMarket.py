@@ -56,6 +56,33 @@ channel.queue_bind(exchange=exchangeName(),
                     queue='signup_queue',
                     routing_key='signup')
 
+
+def match_orders(existing_orders, quantity):
+    """
+    existing_orders: list of dicts with keys id, owner, price, quantity, filled
+                     already filtered by symbol and sorted by price priority.
+    Returns: (fills, amount_filled, total_cost)
+      fills: list of (order_id, owner, num_filled)
+    """
+    toFill = quantity
+    totalCost = 0
+    fills = []
+    for oSide in existing_orders:
+        oId = oSide['id']
+        oOwner = oSide['owner']
+        oPrice = oSide['price']
+        oQuantity = oSide['quantity']
+        oFilled = oSide['filled']
+        leftInOther = oQuantity - oFilled
+        numFilled = min(leftInOther, toFill)
+        toFill -= numFilled
+        totalCost += numFilled * oPrice
+        fills.append((oId, oOwner, numFilled))
+        if toFill == 0:
+            break
+    return fills, quantity - toFill, totalCost
+
+
 def on_order(ch, method, props, body):
     fills_to_send = []
     with pool.connection() as conn:
@@ -84,40 +111,33 @@ def on_order(ch, method, props, body):
                             ORDER BY price DESC;""",
                             (symbol,price))
             res = cur.fetchall()
-            toFill = quantity
-            totalCost = 0
             print(res)
-            for oSide in res:
-                oId = oSide['id']
-                oOwner = oSide['owner']
-                oPrice = oSide['price']
-                oQuantity = oSide['quantity']
-                oFilled = oSide['filled']
-                leftInOther = oQuantity-oFilled
-                numFilled = min(leftInOther,toFill)
-                toFill-=numFilled
-                totalCost+=numFilled*oPrice
-                if(leftInOther==numFilled):
+
+            fills, amount_filled, total_cost = match_orders(res, quantity)
+
+            res_by_id = {o['id']: o for o in res}
+            for oId, oOwner, numFilled in fills:
+                oFilled = res_by_id[oId]['filled']
+                oQuantity = res_by_id[oId]['quantity']
+                if (oQuantity - oFilled) == numFilled:
                     cur.execute("DELETE FROM activeOrders WHERE id = %s", (oId,))
                 else:
-                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oFilled+numFilled,oId))
+                    cur.execute("UPDATE activeOrders SET filled = %s WHERE id = %s", (oFilled+numFilled, oId))
                 orderFillMSG = marketMessages_pb2.OrderFillMSG()
                 orderFillMSG.orderID = oId
                 orderFillMSG.filled = numFilled
                 fills_to_send.append((str(oOwner)+".orderFill", orderFillMSG.SerializeToString()))
-                if(toFill==0):
-                    break
 
             response = marketMessages_pb2.OrderResponseMSG()
-            response.amountFilled = quantity-toFill
-            if(toFill>0):
+            response.amountFilled = amount_filled
+            if (quantity - amount_filled) > 0:
                 cur.execute("""
                             INSERT INTO activeOrders(symbol,owner,buyside,price,quantity,filled)
                             VALUES(%s,%s,%s,%s,%s,%s) RETURNING id""",
-                            (symbol,id,buySide,price,quantity,response.amountFilled))
+                            (symbol,id,buySide,price,quantity,amount_filled))
                 response.orderID = int(cur.fetchone()['id'])
             response.successful = True
-            response.price = totalCost
+            response.price = total_cost
     # DB transaction committed; publish messages now
     for routing_key, fill_body in fills_to_send:
         ch.basic_publish(exchange=exchangeName(),
