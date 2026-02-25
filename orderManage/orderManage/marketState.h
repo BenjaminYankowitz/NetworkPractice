@@ -76,7 +76,7 @@ public:
   // Test constructor: supply a custom (e.g. no-op) send function.
   explicit MarketState(KafkaSendFn fn) : d_kafkaSend(std::move(fn)) {}
 
-  // Production constructor: creates a real KafkaProducer. Defined in main.cpp.
+  // Production constructor: creates a real KafkaProducer. Defined in marketState.cpp.
   MarketState();
 
   MarketState(const MarketState &) = delete;
