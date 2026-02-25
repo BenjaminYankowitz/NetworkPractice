@@ -7,10 +7,9 @@ set_property(TARGET orderManageTests PROPERTY CXX_STANDARD 17)
 target_include_directories(orderManageTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_link_libraries(orderManageTests PRIVATE
+    MarketConnect
     GTest::gtest_main
     PrintMarketProto
-    KafkaTopics
-    PkgConfig::RDKAFKA
 )
 
 include(GoogleTest)

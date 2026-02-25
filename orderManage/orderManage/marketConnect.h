@@ -21,7 +21,7 @@
 #include <rmqt_result.h>
 #include <string_view>
 
-extern const BloombergLP::bsl::string ExchangeName;
+extern const bsl::string ExchangeName;
 
 struct ListenStuff {
   BloombergLP::rmqa::VHost &vhost;
@@ -31,9 +31,9 @@ struct ListenStuff {
 
 struct OrderListenhandle {
   BloombergLP::rmqt::QueueHandle responseQueue;
-  BloombergLP::bsl::shared_ptr<BloombergLP::rmqa::Consumer> responseConsumer;
+  bsl::shared_ptr<BloombergLP::rmqa::Consumer> responseConsumer;
   BloombergLP::rmqt::QueueHandle fillQueue;
-  BloombergLP::bsl::shared_ptr<BloombergLP::rmqa::Consumer> fillConsumer;
+  bsl::shared_ptr<BloombergLP::rmqa::Consumer> fillConsumer;
 };
 
 static constexpr int64_t failureId = 0;
@@ -43,9 +43,9 @@ int64_t registerWithMarket(ListenStuff, BloombergLP::rmqa::Producer &,
                            kafka::clients::producer::KafkaProducer &);
 
 OrderListenhandle startListeningToOrderResponses(ListenStuff,
-                                                 const BloombergLP::bsl::string &,
+                                                 const bsl::string &,
                                                  MarketState &);
 
 bool sendOrderToMarket(BloombergLP::rmqa::Producer &,
-                       const BloombergLP::bsl::string &,
+                       const bsl::string &,
                        AtomicCounter &, MarketOrder, MarketState &);
