@@ -39,13 +39,14 @@ struct OrderListenhandle {
 static constexpr int64_t failureId = 0;
 
 int64_t registerWithMarket(ListenStuff, BloombergLP::rmqa::Producer &,
-                           std::string_view,
-                           kafka::clients::producer::KafkaProducer &);
+                           kafka::clients::producer::KafkaProducer &,
+                           std::string_view);
 
-OrderListenhandle startListeningToOrderResponses(ListenStuff,
-                                                 const bsl::string &,
-                                                 MarketState &);
+OrderListenhandle
+startListeningToOrderResponses(ListenStuff,
+                               kafka::clients::producer::KafkaProducer &,
+                               const bsl::string &, MarketState &);
 
-bool sendOrderToMarket(BloombergLP::rmqa::Producer &,
-                       const bsl::string &,
+bool sendOrderToMarket(BloombergLP::rmqa::Producer &, kafka::clients::producer::KafkaProducer &,
+                       bsl::string,
                        AtomicCounter &, MarketOrder, MarketState &);

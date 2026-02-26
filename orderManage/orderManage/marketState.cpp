@@ -1,19 +1,21 @@
+#include "kafkaTopics.h"
 #include "marketConnect.h"
 #include <bsl_optional.h>
 #include <bsl_vector.h>
-#include <kafka/Types.h>
-#include <sys/types.h>
 #include <cassert>
 #include <future>
 #include <iostream>
+#include <kafka/Types.h>
 #include <memory>
 #include <random>
 #include <string>
+#include <sys/types.h>
 #include <utility>
 using namespace BloombergLP;
 
 struct KafkaDeliveryCBSharedData {
-  KafkaDeliveryCBSharedData(bsl::shared_ptr<bsl::vector<uint8_t>>&& data) : data_(std::move(data)) {}
+  KafkaDeliveryCBSharedData(bsl::shared_ptr<bsl::vector<uint8_t>> &&data)
+      : data_(std::move(data)) {}
 
   void operator()(const kafka::clients::producer::RecordMetadata &metadata,
                   const kafka::Error &error) {
@@ -28,7 +30,7 @@ struct KafkaDeliveryCBSharedData {
 };
 
 struct KafkaDeliveryCBSingleData {
-  KafkaDeliveryCBSingleData(uint8_t* data) : data_(data) {}
+  KafkaDeliveryCBSingleData(uint8_t *data) : data_(data) {}
 
   void operator()(const kafka::clients::producer::RecordMetadata &metadata,
                   const kafka::Error &error) {
@@ -40,26 +42,20 @@ struct KafkaDeliveryCBSingleData {
     }
     delete[] data_;
   }
-  uint8_t* data_;
+  uint8_t *data_;
 };
 
-// Default constructor: wraps a real KafkaProducer in the send function.
-MarketState::MarketState() {
-  // Construct in-place via Properties ctor (KafkaProducer is not movable).
-  kafka::Properties props(
-      {{"bootstrap.servers", {"localhost:9092"}}, {"enable.idempotence", {"true"}}});
-  d_kafkaProducer = std::make_shared<kafka::clients::producer::KafkaProducer>(props);
-  auto producer = d_kafkaProducer;
-  d_kafkaSend = [producer](const void *data, std::size_t len,
-                            const kafka::Topic &topic) {
-    uint8_t *rawData = new uint8_t[len];
-    std::memcpy(rawData, data, len);
-    producer->send(
-        kafka::clients::producer::ProducerRecord(
-            topic, kafka::NullKey, kafka::Value(rawData, len)),
-        KafkaDeliveryCBSingleData(rawData));
-  };
-}
+struct KafkaDeliveryCBNoeData {
+  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
+                  const kafka::Error &error) {
+    if (!error) {
+      std::cout << "Message delivered: " << metadata.toString() << '\n';
+    } else {
+      std::cerr << "Message failed to be delivered: " << error.message()
+                << '\n';
+    }
+  }
+};
 
 const bsl::string ExchangeName = "MarketExchange";
 
@@ -99,15 +95,16 @@ void messageToArray(T message, bsl::vector<uint8_t> &buffer) {
   message.SerializeWithCachedSizesToArray(buffer.data());
 }
 
-bsl::string uri(){
+bsl::string uri() {
   std::random_device dev;
   std::uniform_int_distribution<uint64_t> dist;
-  return bsl::to_string(dist(dev))+'-'+bsl::to_string(dist(dev));
+  return bsl::to_string(dist(dev)) + '-' + bsl::to_string(dist(dev));
 }
 
-int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
-                        std::string_view username,
-                        kafka::clients::producer::KafkaProducer &kafkaProducer) {
+int64_t
+registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
+                   kafka::clients::producer::KafkaProducer &kafkaProducer,
+                   std::string_view username) {
   auto &[vhost, exch, topology] = listenStuff;
   MarketProto::SignupMSG signupMSG;
   signupMSG.set_name(std::string(username));
@@ -115,7 +112,8 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(signupMSG, *rawData);
   rmqt::Properties properties;
-  rmqt::QueueHandle responseQueue = topology.addQueue(uri(), rmqt::AutoDelete::ON);
+  rmqt::QueueHandle responseQueue =
+      topology.addQueue(uri(), rmqt::AutoDelete::ON);
   properties.replyTo = responseQueue.lock()->name();
   topology.bind(exch, responseQueue, properties.replyTo.value());
   std::promise<int64_t> setUpPromise;
@@ -125,9 +123,11 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   std::atomic<bool> signupResponseReceived{false};
   rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
       topology, responseQueue,
-      [&kafkaProducer, &setUpPromise, &signupResponseReceived](rmqp::MessageGuard &messageGuard) {
+      [&kafkaProducer, &setUpPromise,
+       &signupResponseReceived](rmqp::MessageGuard &messageGuard) {
         if (signupResponseReceived.exchange(true)) {
-          std::cerr << "Received unexpected duplicate signup response; ignoring.\n";
+          std::cerr
+              << "Received unexpected duplicate signup response; ignoring.\n";
           messageGuard.ack();
           return;
         }
@@ -140,16 +140,17 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
         } else {
           setUpPromise.set_value(signupResponseMSG.assignedid());
         }
-        auto msgLen = static_cast<std::size_t>(signupResponseMSG.ByteSizeLong());
+        auto msgLen =
+            static_cast<std::size_t>(signupResponseMSG.ByteSizeLong());
         uint8_t *rawBuf = new uint8_t[msgLen];
         signupResponseMSG.SerializeWithCachedSizesToArray(rawBuf);
-        kafkaProducer.send(
-            kafka::clients::producer::ProducerRecord(
-                KafkaTopic::SignupResponse, kafka::NullKey,
-                kafka::Value(rawBuf, msgLen)),
-            KafkaDeliveryCBSingleData(rawBuf));
+        kafkaProducer.send(kafka::clients::producer::ProducerRecord(
+                               KafkaTopic::SignupResponse, kafka::NullKey,
+                               kafka::Value(rawBuf, msgLen)),
+                           KafkaDeliveryCBSingleData(rawBuf));
         messageGuard.ack();
-      },config);
+      },
+      config);
   if (!activateConsumerResult) {
     std::cerr << "Error creating connection: " << activateConsumerResult.error()
               << "\n";
@@ -179,16 +180,17 @@ int64_t registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
   }
   activateConsumerResult.value()->cancelAndDrain();
   int64_t queueRet = setUpFuture.get();
-  if (queueRet==failureId) {
+  if (queueRet == failureId) {
     std::cerr << "Market did not confirm\n";
     return failureId;
   }
   return queueRet;
 }
 
-OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
-                                                 const bsl::string &id,
-                                                 MarketState &marketState) {
+OrderListenhandle startListeningToOrderResponses(
+    ListenStuff listenStuff,
+    kafka::clients::producer::KafkaProducer &logProducer, const bsl::string &id,
+    MarketState &marketState) {
   OrderListenhandle ret;
   auto &[vhost, exch, topology] = listenStuff;
   bsl::string responseQueueKey = id + ".orderResponse";
@@ -198,11 +200,18 @@ OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
   topology.bind(exch, ret.responseQueue, responseQueueKey);
   rmqt::Result<rmqa::Consumer> responsesConsumerResult = vhost.createConsumer(
       topology, ret.responseQueue,
-      [&marketState](rmqp::MessageGuard &messageGuard) {
+      [&marketState, &logProducer](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
         assert(message.properties().correlationId.has_value());
         MarketProto::OrderResponseMSG respMesg;
         respMesg.ParseFromArray(message.payload(), message.payloadSize());
+        logProducer.send(
+            kafka::clients::producer::ProducerRecord(
+                KafkaTopic::Order, kafka::NullKey,
+                kafka::Value(message.payload(), message.payloadSize())),
+            KafkaDeliveryCBNoeData(),
+            kafka::clients::producer::KafkaProducer::SendOption::
+                ToCopyRecordValue);
         marketState.processOrderResponse(
             bsl::stoll(message.properties().correlationId.value()), respMesg);
         messageGuard.ack();
@@ -218,10 +227,17 @@ OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
   topology.bind(exch, ret.fillQueue, id + ".orderFill");
   rmqt::Result<rmqa::Consumer> fillConsumerResult = vhost.createConsumer(
       topology, ret.fillQueue,
-      [&marketState](rmqp::MessageGuard &messageGuard) {
+      [&marketState, &logProducer](rmqp::MessageGuard &messageGuard) {
         const rmqt::Message &message = messageGuard.message();
         MarketProto::OrderFillMSG orderFillMSG;
         orderFillMSG.ParseFromArray(message.payload(), message.payloadSize());
+        logProducer.send(
+            kafka::clients::producer::ProducerRecord(
+                KafkaTopic::OrderFill, kafka::NullKey,
+                kafka::Value(message.payload(), message.payloadSize())),
+            KafkaDeliveryCBNoeData(),
+            kafka::clients::producer::KafkaProducer::SendOption::
+                ToCopyRecordValue);
         marketState.processOrderFill(orderFillMSG);
         messageGuard.ack();
       });
@@ -234,20 +250,25 @@ OrderListenhandle startListeningToOrderResponses(ListenStuff listenStuff,
   return ret;
 }
 
-bool sendOrderToMarket(rmqa::Producer &producer, const bsl::string &id,
-                       AtomicCounter &correlationIdGenerator, MarketOrder order,
-                       MarketState &marketState) {
-  int64_t correlationId = correlationIdGenerator.get();
+bool sendOrderToMarket(rmqa::Producer &marketProducer,
+                       kafka::clients::producer::KafkaProducer &logProducer,
+                       bsl::string id, AtomicCounter &corrIdGenerator,
+                       MarketOrder order, MarketState &marketState) {
+  int64_t correlationId = corrIdGenerator.get();
   MarketProto::OrderMSG orderMSG = order.toOrderMSG();
   bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
       bsl::make_shared<bsl::vector<uint8_t>>();
   messageToArray(orderMSG, *rawData);
   rmqt::Properties properties;
   properties.correlationId = bsl::to_string(correlationId);
-  properties.replyTo = id;
+  properties.replyTo = std::move(id);
   rmqt::Message message = rmqt::Message(rawData, properties);
-  marketState.processOrderToMarket(correlationId, order, rawData->data(), rawData->size());
-  if (!sendMessage(producer, message, "order")) {
+  logProducer.send(kafka::clients::producer::ProducerRecord(
+                       KafkaTopic::Order, kafka::NullKey,
+                       kafka::Value(rawData->data(), rawData->max_size())),
+                   KafkaDeliveryCBSharedData(std::move(rawData)));
+  marketState.processOrderToMarket(correlationId, order);
+  if (!sendMessage(marketProducer, message, "order")) {
     return false;
   }
   return true;

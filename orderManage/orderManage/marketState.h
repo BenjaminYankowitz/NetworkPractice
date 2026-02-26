@@ -19,15 +19,16 @@
 #include <vector>
 
 // Kafka send function type: caller-owned bytes, callee must copy if async.
-using KafkaSendFn =
-    std::function<void(const void *data, std::size_t len, const kafka::Topic &topic)>;
+using KafkaSendFn = std::function<void(const void *data, std::size_t len,
+                                       const kafka::Topic &topic)>;
 
 constexpr int maxSymbolSize = 5;
 
 struct MarketOrder {
   MarketOrder(std::string symbolI, int64_t amountI, int64_t priceI,
               bool buySideI)
-      : symbol(std::move(symbolI)), amount(amountI), price(priceI), buySide(buySideI) {
+      : symbol(std::move(symbolI)), amount(amountI), price(priceI),
+        buySide(buySideI) {
     assert(symbol.size() <= maxSymbolSize);
     assert(amount > 0);
     assert(price >= 0);
@@ -55,9 +56,9 @@ private:
 };
 
 struct ActiveMarketOrder {
-  ActiveMarketOrder(MarketOrder&& origin, int64_t initFilled)
-      : symbol(std::move(origin.symbol)), amount(origin.amount), filled(initFilled),
-        price(origin.price), buySide(origin.buySide) {}
+  ActiveMarketOrder(MarketOrder &&origin, int64_t initFilled)
+      : symbol(std::move(origin.symbol)), amount(origin.amount),
+        filled(initFilled), price(origin.price), buySide(origin.buySide) {}
   std::string symbol;
   int64_t amount;
   std::atomic<int64_t> filled;
@@ -72,29 +73,16 @@ inline std::ostream &operator<<(std::ostream &out, MarketOrder order) {
 
 class MarketState {
 public:
-  // Test constructor: supply a custom (e.g. no-op) send function.
-  explicit MarketState(KafkaSendFn fn) : d_kafkaSend(std::move(fn)) {}
-
-  // Production constructor: creates a real KafkaProducer. Defined in marketState.cpp.
-  MarketState();
-
+  MarketState() = default;
   MarketState(const MarketState &) = delete;
 
-  void processOrderToMarket(int64_t correlationId, const MarketOrder &order,
-                            const void *data, std::size_t len) {
-    d_kafkaSend(data, len, KafkaTopic::Order);
+  void processOrderToMarket(int64_t correlationId, const MarketOrder &order) {
     std::lock_guard lk(corrMutex);
     ordersInFlight.emplace(correlationId, order);
   }
 
   void processOrderResponse(int64_t correlationId,
                             const MarketProto::OrderResponseMSG &respMesg) {
-    {
-      auto msgLen = static_cast<std::size_t>(respMesg.ByteSizeLong());
-      std::vector<uint8_t> buf(msgLen);
-      respMesg.SerializeWithCachedSizesToArray(buf.data());
-      d_kafkaSend(buf.data(), msgLen, KafkaTopic::OrderResponse);
-    }
     auto originOrderHandle = [&]() {
       std::lock_guard lk(corrMutex);
       return ordersInFlight.extract(correlationId);
@@ -120,14 +108,8 @@ public:
   }
 
   void processOrderFill(const MarketProto::OrderFillMSG &orderFillMSG) {
-    {
-      auto msgLen = static_cast<std::size_t>(orderFillMSG.ByteSizeLong());
-      std::vector<uint8_t> buf(msgLen);
-      orderFillMSG.SerializeWithCachedSizesToArray(buf.data());
-      d_kafkaSend(buf.data(), msgLen, KafkaTopic::OrderFill);
-    }
     int64_t numFilled = orderFillMSG.filled();
-    assert(numFilled>0);
+    assert(numFilled > 0);
     int64_t orderId = orderFillMSG.orderid();
     auto orderFound = [&]() -> std::shared_ptr<ActiveMarketOrder> {
       auto totalSleep = std::chrono::milliseconds(0);
@@ -139,17 +121,17 @@ public:
           return orderFoundIter->second;
         }
         lk.unlock();
-        std::this_thread::sleep_for(sleepTime); 
+        std::this_thread::sleep_for(sleepTime);
         std::cout << "Sleep time\n";
-        totalSleep+=sleepTime;
-        if(totalSleep>std::chrono::seconds(5)){
+        totalSleep += sleepTime;
+        if (totalSleep > std::chrono::seconds(5)) {
           return nullptr;
         }
         sleepTime *= 2;
       }
     }();
-    if(!orderFound){
-      assert(false); // add 
+    if (!orderFound) {
+      assert(false); // add
     }
     const auto amnt = orderFound->amount;
     if ((orderFound->filled += numFilled) == amnt) {
@@ -180,14 +162,7 @@ public:
     return ordersOnMarket.empty();
   }
 
-  // Returns the real KafkaProducer; only valid on default-constructed instances.
-  kafka::clients::producer::KafkaProducer &getKafkaProducer() {
-    return *d_kafkaProducer;
-  }
-
 private:
-  std::shared_ptr<kafka::clients::producer::KafkaProducer> d_kafkaProducer;
-  KafkaSendFn d_kafkaSend;
   std::mutex corrMutex;
   std::unordered_map<int64_t, MarketOrder> ordersInFlight;
   std::shared_mutex idsMutex;

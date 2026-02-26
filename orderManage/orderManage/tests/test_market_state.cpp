@@ -1,4 +1,5 @@
 #include "marketState.h"
+#include <chrono>
 #include <future>
 #include <gtest/gtest.h>
 #include <mutex>
@@ -75,9 +76,9 @@ TEST(MarketOrderTests, ToProtoMappingSell) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderToMarketAddsInFlight) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(42, order, nullptr, 0);
+  state.processOrderToMarket(42, order);
   EXPECT_TRUE(state.hasOrderInFlight(42));
   EXPECT_FALSE(state.hasOrderInFlight(99)); // different id not present
 }
@@ -87,9 +88,9 @@ TEST(MarketStateTests, OrderToMarketAddsInFlight) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderResponseFullFillRemovesInFlight) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   MarketProto::OrderResponseMSG resp;
   resp.set_successful(true);
@@ -109,9 +110,9 @@ TEST(MarketStateTests, OrderResponseFullFillRemovesInFlight) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderResponseUnsuccessfulRemovesInFlightOnly) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   MarketProto::OrderResponseMSG resp;
   resp.set_successful(false);
@@ -126,9 +127,9 @@ TEST(MarketStateTests, OrderResponseUnsuccessfulRemovesInFlightOnly) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderResponsePartialFillMovesToMarket) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   MarketProto::OrderResponseMSG resp;
   resp.set_successful(true);
@@ -148,9 +149,9 @@ TEST(MarketStateTests, OrderResponsePartialFillMovesToMarket) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderFillPartialUpdatesCount) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   // Partial response: 3 filled at once, 7 rest on market with id=77
   MarketProto::OrderResponseMSG resp;
@@ -175,9 +176,9 @@ TEST(MarketStateTests, OrderFillPartialUpdatesCount) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, OrderFillCompletingRemovesOrder) {
-  MarketState state(noopKafkaSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   // 3 filled immediately, 7 rest on market with id=88
   MarketProto::OrderResponseMSG resp;
@@ -201,21 +202,9 @@ TEST(MarketStateTests, OrderFillCompletingRemovesOrder) {
 // ---------------------------------------------------------------------------
 
 TEST(MarketStateTests, ConcurrentResponseAndFill) {
-  // processOrderFill calls d_kafkaSend(OrderFill) *before* its spin-wait.
-  // We hook that send to signal Thread A so it only calls processOrderResponse
-  // after Thread B has committed to the spin-wait path.
-  std::promise<void> fillKafkaDone;
-  auto fillKafkaDoneFuture = fillKafkaDone.get_future();
-  std::once_flag signalOnce;
-  KafkaSendFn syncedSend = [&](const void *, std::size_t,
-                                const kafka::Topic &topic) {
-    if (topic == KafkaTopic::OrderFill)
-      std::call_once(signalOnce, [&] { fillKafkaDone.set_value(); });
-  };
-
-  MarketState state(syncedSend);
+  MarketState state;
   MarketOrder order("AAPL", 10, 1000, true);
-  state.processOrderToMarket(1, order, nullptr, 0);
+  state.processOrderToMarket(1, order);
 
   // Response: 0 immediately filled, order rests with id=99
   MarketProto::OrderResponseMSG resp;
@@ -229,13 +218,14 @@ TEST(MarketStateTests, ConcurrentResponseAndFill) {
   fillMsg.set_orderid(99);
   fillMsg.set_filled(10);
 
-  // Thread A waits until Thread B has done its Kafka send (just before spin-wait).
-  std::thread threadA([&]() {
-    fillKafkaDoneFuture.wait();
+  std::thread threadA([&]() { state.processOrderFill(fillMsg); });
+  std::thread threadB([&]() { 
+    // This is kinda a hack to make sure the response arrives after the filling
+    // But on the plus side it should never have a false positive (only false negative which is unlikily)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     state.processOrderResponse(1, resp);
   });
 
-  std::thread threadB([&]() { state.processOrderFill(fillMsg); });
 
   threadA.join();
   threadB.join();
