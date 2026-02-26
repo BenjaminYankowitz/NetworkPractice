@@ -1,8 +1,6 @@
 #include "marketState.h"
 #include <chrono>
-#include <future>
 #include <gtest/gtest.h>
-#include <mutex>
 #include <thread>
 #include <unordered_set>
 #include <vector>

@@ -207,7 +207,7 @@ OrderListenhandle startListeningToOrderResponses(
         respMesg.ParseFromArray(message.payload(), message.payloadSize());
         logProducer.send(
             kafka::clients::producer::ProducerRecord(
-                KafkaTopic::Order, kafka::NullKey,
+                KafkaTopic::OrderResponse, kafka::NullKey,
                 kafka::Value(message.payload(), message.payloadSize())),
             KafkaDeliveryCBNoeData(),
             kafka::clients::producer::KafkaProducer::SendOption::
@@ -265,7 +265,7 @@ bool sendOrderToMarket(rmqa::Producer &marketProducer,
   rmqt::Message message = rmqt::Message(rawData, properties);
   logProducer.send(kafka::clients::producer::ProducerRecord(
                        KafkaTopic::Order, kafka::NullKey,
-                       kafka::Value(rawData->data(), rawData->max_size())),
+                       kafka::Value(rawData->data(), rawData->size())),
                    KafkaDeliveryCBSharedData(std::move(rawData)));
   marketState.processOrderToMarket(correlationId, order);
   if (!sendMessage(marketProducer, message, "order")) {
