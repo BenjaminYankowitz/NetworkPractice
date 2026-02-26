@@ -6,7 +6,6 @@
 #include <future>
 #include <iostream>
 #include <kafka/Types.h>
-#include <memory>
 #include <random>
 #include <string>
 #include <sys/types.h>
