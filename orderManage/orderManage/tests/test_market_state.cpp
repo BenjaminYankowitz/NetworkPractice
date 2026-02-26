@@ -7,10 +7,6 @@
 #include <unordered_set>
 #include <vector>
 
-// No-op KafkaSendFn for unit tests: Kafka is not required.
-static KafkaSendFn noopKafkaSend = [](const void *, std::size_t,
-                                      const kafka::Topic &) {};
-
 // ---------------------------------------------------------------------------
 // AtomicCounter tests
 // ---------------------------------------------------------------------------

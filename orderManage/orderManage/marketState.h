@@ -1,26 +1,16 @@
 #pragma once
-#include "kafkaTopics.h"
 #include "marketMessages.pb.h"
 #include "printMarketProto.h"
 #include <atomic>
 #include <cassert>
-#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <iostream>
-#include <kafka/KafkaProducer.h>
-#include <kafka/Types.h>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <vector>
-
-// Kafka send function type: caller-owned bytes, callee must copy if async.
-using KafkaSendFn = std::function<void(const void *data, std::size_t len,
-                                       const kafka::Topic &topic)>;
 
 constexpr int maxSymbolSize = 5;
 
