@@ -139,14 +139,11 @@ registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
         } else {
           setUpPromise.set_value(signupResponseMSG.assignedid());
         }
-        auto msgLen =
-            static_cast<std::size_t>(signupResponseMSG.ByteSizeLong());
-        uint8_t *rawBuf = new uint8_t[msgLen];
-        signupResponseMSG.SerializeWithCachedSizesToArray(rawBuf);
         kafkaProducer.send(kafka::clients::producer::ProducerRecord(
                                KafkaTopic::SignupResponse, kafka::NullKey,
-                               kafka::Value(rawBuf, msgLen)),
-                           KafkaDeliveryCBSingleData(rawBuf));
+                               kafka::Value(message.payload(), message.payloadSize())),
+                           KafkaDeliveryCBNoeData(),kafka::clients::producer::KafkaProducer::SendOption::
+                ToCopyRecordValue);
         messageGuard.ack();
       },
       config);
