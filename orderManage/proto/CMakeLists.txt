@@ -1,14 +1,25 @@
+# add_library(MarketProtoSource)
+# target_sources(MarketProtoSource PUBLIC marketMessages.proto)
+
 add_library(MarketProto)
-target_sources(MarketProto 
+target_sources(MarketProto
 INTERFACE FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_BINARY_DIR} 
 FILES ${CMAKE_CURRENT_BINARY_DIR}/marketMessages.pb.h
-PRIVATE marketMessages.proto)
-protobuf_generate(TARGET MarketProto LANGUAGE cpp)
-
+PUBLIC marketMessages.proto)
 target_link_libraries(MarketProto
     PUBLIC
-        protobuf::libprotobuf
-)
+        protobuf::libprotobuf)
+protobuf_generate(TARGET MarketProto LANGUAGE cpp)
+
+add_library(LogProto)
+target_sources(LogProto 
+INTERFACE FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_BINARY_DIR} 
+FILES ${CMAKE_CURRENT_BINARY_DIR}/logMessages.pb.h
+PUBLIC logMessages.proto)
+target_link_libraries(LogProto
+    PUBLIC
+        MarketProto protobuf::libprotobuf)
+protobuf_generate(TARGET LogProto LANGUAGE cpp)
 
 add_library(PrintMarketProto INTERFACE)
 target_sources(PrintMarketProto INTERFACE FILE_SET HEADERS FILES printMarketProto.h)

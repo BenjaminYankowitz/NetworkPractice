@@ -6,7 +6,7 @@ PUBLIC FILE_SET HEADERS FILES marketState.h marketConnect.h
 PRIVATE marketState.cpp)
 set_property(TARGET MarketConnect PROPERTY CXX_STANDARD 17)
 target_link_libraries(MarketConnect PUBLIC
-    MarketProto rmqcpp::rmq PkgConfig::RDKAFKA PrintMarketProto OrderManage::KafkaTopics)
+    rmqcpp::rmq PkgConfig::RDKAFKA PrintMarketProto OrderManage::KafkaTopics LogProto)
 
 add_executable(orderManage main.cpp)
 set_property(TARGET orderManage PROPERTY CXX_STANDARD 17)

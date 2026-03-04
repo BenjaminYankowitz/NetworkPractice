@@ -1,30 +1,15 @@
 syntax = "proto3";
 package LogProto;
-import "marketMessages.proto"
+import "marketMessages.proto";
 
-message OrderMSGIntent {
-  string symbol = 1;
-  bool buySide = 2; 
-  int64 quantity = 3;
-  int64 price = 4;
+message RabbitMSGIntent {
+  bytes guid = 1;
+  oneof msg {
+    MarketProto.OrderMSG order = 2;
+    MarketProto.SignupMSG signup = 3;
+  }
 }
 
-// message OrderFillMSG {
-//   int64 orderID = 1;
-//   int64 filled = 2;
-// }
-
-// message OrderResponseMSG {
-//   bool successful = 1;
-//   optional int64 orderID = 2;
-//   int64 amountFilled = 3;
-//   int64 price = 4;
-// }
-
-// message SignupMSG{
-//   string name = 1;
-// }
-
-// message SignupResponseMSG {
-//   int64 assignedId = 1;
-// }
+message RabbitMSGSuccess {
+  bytes guid = 1;
+}

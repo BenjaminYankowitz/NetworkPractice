@@ -40,13 +40,13 @@ static constexpr int64_t failureId = 0;
 
 int64_t registerWithMarket(ListenStuff, BloombergLP::rmqa::Producer &,
                            kafka::clients::producer::KafkaProducer &,
-                           std::string_view);
+                           kafka::Key);
 
 OrderListenhandle
 startListeningToOrderResponses(ListenStuff,
                                kafka::clients::producer::KafkaProducer &,
-                               const bsl::string &, MarketState &);
+                               const bsl::string &, kafka::Key, MarketState &);
 
 bool sendOrderToMarket(BloombergLP::rmqa::Producer &, kafka::clients::producer::KafkaProducer &,
-                       bsl::string,
+                       bsl::string, kafka::Key,
                        AtomicCounter &, MarketOrder, MarketState &);

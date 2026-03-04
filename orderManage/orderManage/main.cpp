@@ -2,6 +2,7 @@
 #include <bsl_optional.h>
 #include <chrono>
 #include <iostream>
+#include <random>
 #include <rmqa_connectionstring.h>
 #include <rmqa_rabbitcontext.h>
 #include <rmqt_vhostinfo.h>
@@ -22,10 +23,16 @@ int main(int argc, char **argv) {
     std::cerr << "Failed to parse connection string: " << amqpuri << "\n";
     return 1;
   }
-
-  std::cout << "What is your name?\n";
-  const std::string username = []() {
+  
+  const std::string usernameStr = [argc, argv]() {
     std::string ret;
+    if(argc==2 && argv[1] == std::string_view("-n")){
+      std::random_device dev;
+      ret = std::to_string(dev());
+      std::cout << ret << '\n';
+      return ret;
+    }
+    std::cout << "What is your name?\n";
     if (!std::getline(std::cin, ret)) {
       std::cerr << "Failed to read username\n";
       std::exit(1);
@@ -33,8 +40,10 @@ int main(int argc, char **argv) {
     return ret;
   }();
 
+  kafka::Key username(usernameStr.data(),usernameStr.size()); 
+
   bsl::shared_ptr<rmqa::VHost> vhost =
-      rabbit.createVHostConnection(username, vhostInfo.value());
+      rabbit.createVHostConnection(usernameStr, vhostInfo.value());
   constexpr uint16_t maxOutstandingConfirms = 10;
 
   rmqa::Topology topology;
@@ -64,13 +73,13 @@ int main(int argc, char **argv) {
   }
   const auto id = bsl::to_string(numId);
   auto listenHandles = startListeningToOrderResponses(
-      listenStuff, kafkaProducer, id, marketState);
+      listenStuff, kafkaProducer, id, username, marketState);
   if (!(listenHandles.responseConsumer && listenHandles.fillConsumer)) {
     return 1;
   }
-  sendOrderToMarket(*producer, kafkaProducer, id, correlationIdGenerator,
+  sendOrderToMarket(*producer, kafkaProducer, id, username, correlationIdGenerator,
                     MarketOrder("slugs", 10, 1000, false), marketState);
-  sendOrderToMarket(*producer, kafkaProducer, id, correlationIdGenerator,
+  sendOrderToMarket(*producer, kafkaProducer, id, username, correlationIdGenerator,
                     MarketOrder("slugs", 10, 1000, true), marketState);
   std::cout << "Market confirmed\n";
   while (true) {
