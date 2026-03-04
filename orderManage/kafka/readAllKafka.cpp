@@ -1,13 +1,11 @@
 #include "kafkaTopics.h"
-#include "marketMessages.pb.h"
-#include "printMarketProto.h"
+#include "logMessages.pb.h"
+#include "printLogProto.h"
 #include <csignal>
 #include <iostream>
-#include <kafka/Interceptors.h>
 #include <kafka/KafkaConsumer.h>
 #include <kafka/Types.h>
 #include <string>
-#include <string_view>
 static std::atomic_bool running = true;
 
 static void sigterm(int) { running = false; }
@@ -17,58 +15,29 @@ struct Settings {
   bool endAtCurrent = false;
 };
 
-std::string_view toView(kafka::ConstBuffer buffer) {
-  return std::string_view(static_cast<const char *>(buffer.data()),
-                          buffer.size());
-}
-
-template <class T> void printValue(kafka::ConstBuffer value) {
-  T msg;
-  msg.ParseFromArray(value.data(), value.size());
-  std::cout << msg << '\n';
-}
-
-void printValue(const std::string_view &topic, kafka::ConstBuffer value) {
-  using namespace KafkaTopic;
-  if (topic == Signup) {
-    printValue<MarketProto::SignupMSG>(value);
-  } else if (topic == SignupResponse) {
-    printValue<MarketProto::SignupResponseMSG>(value);
-  } else if (topic == Order) {
-    printValue<MarketProto::OrderMSG>(value);
-  } else if (topic == OrderResponse) {
-    printValue<MarketProto::OrderResponseMSG>(value);
-  } else if (topic == OrderFill) {
-    printValue<MarketProto::OrderFillMSG>(value);
-  } else {
-    std::cout << "unknown key\n";
-  }
-}
-
 void printAllMessages(const std::string &brokers, const std::string &group_id,
                       const std::set<std::string> &topics, Settings settings) {
   const kafka::Properties props(
       {{"bootstrap.servers", {brokers}}, {"group.id", {group_id}}});
-  std::cout << "A\n";
   kafka::clients::consumer::KafkaConsumer consumer(props);
-  std::cout << "B\n";
   consumer.subscribe(topics);
-  std::cout << "C\n";
   if (settings.startFromBeginning) {
     consumer.seekToBeginning();
   }
-  std::cout << "Consuming from ' ";
-  for(const auto& topic : topics){
-    std::cout << topic << ' ';
+  std::cout << "Consuming from '";
+  for (const auto &topic : topics) {
+    std::cout << ' ' << topic;
   }
-  std::cout << "' (Ctrl-C to quit)...\n";
+  std::cout << " ' (Ctrl-C to quit)...\n";
   auto endOffsets = consumer.endOffsets(consumer.assignment());
-  std::cout << "D\n";
   while (running) {
     auto records = consumer.poll(std::chrono::milliseconds(100));
     for (const auto &record : records) {
-      const auto endOffset = endOffsets.find(std::make_pair(record.topic(), record.partition()));
-      const bool newMessage = endOffset==endOffsets.end() || record.offset() >= endOffset->second;
+      const auto endOffset =
+          endOffsets.find(std::make_pair(record.topic(), record.partition()));
+      const bool newMessage =
+          endOffset == endOffsets.end() ||
+          record.offset() >= endOffset->second;
       if (settings.endAtCurrent && newMessage) {
         continue;
       }
@@ -84,7 +53,13 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
         std::cout << "    Headers  : " << toString(record.headers()) << '\n';
         std::cout << "    Key   [" << record.key().toString() << "]" << '\n';
         std::cout << "    Value [\n";
-        printValue(record.topic(), record.value());
+        LogProto::AuditRecord auditRecord;
+        if (auditRecord.ParseFromArray(record.value().data(),
+                                       record.value().size())) {
+          std::cout << auditRecord << '\n';
+        } else {
+          std::cerr << "    <failed to parse AuditRecord>\n";
+        }
         std::cout << "    ]\n";
       } else {
         std::cerr << record.toString() << '\n';
@@ -106,14 +81,10 @@ void printAllMessages(const std::string &brokers, const std::string &group_id,
   }
 }
 
-
 int main(int argc, char **argv) {
   std::string brokers = "localhost:9092";
   std::string group_id = "my-group";
-  std::set<kafka::Topic> topics = [](){
-    using namespace KafkaTopic;
-    return std::set{Signup,SignupResponse,Order,OrderResponse,OrderFill};
-  }();
+  std::set<kafka::Topic> topics = {KafkaTopic::Audit};
   const Settings settings = [argc, argv]() {
     Settings settings;
     for (int i = 0; i < argc; i++) {
@@ -133,7 +104,7 @@ int main(int argc, char **argv) {
   sigaction(SIGINT, &sa, nullptr);
   sigaction(SIGTERM, &sa, nullptr);
   try {
-    printAllMessages(brokers,group_id,topics,settings);
+    printAllMessages(brokers, group_id, topics, settings);
   } catch (const kafka::KafkaException &exception) {
     std::cout << "could not subscribe: " << exception.what() << '\n';
     return 1;

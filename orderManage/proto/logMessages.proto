@@ -13,3 +13,13 @@ message RabbitMSGIntent {
 message RabbitMSGSuccess {
   bytes guid = 1;
 }
+
+message AuditRecord {
+  oneof record {
+    RabbitMSGIntent intent = 1;
+    RabbitMSGSuccess success = 2;
+    MarketProto.SignupResponseMSG signup_response = 3;
+    MarketProto.OrderResponseMSG order_response = 4;
+    MarketProto.OrderFillMSG order_fill = 5;
+  }
+}

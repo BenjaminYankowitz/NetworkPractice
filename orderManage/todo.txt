@@ -1,8 +1,3 @@
 1. Deal with orphaned order response (marketState.h 124)
 
 2. Kafka log compaction
-
-3. move everything into 1 kafka topic.
-
-4. fix kafka readers
-

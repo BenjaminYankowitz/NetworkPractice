@@ -14,8 +14,6 @@
 #include <rmqt_confirmresponse.h>
 #include <rmqt_consumerconfig.h>
 #include <rmqt_exchange.h>
-#include <rmqt_exchangetype.h>
-#include <rmqt_fieldvalue.h>
 #include <rmqt_message.h>
 #include <rmqt_properties.h>
 #include <rmqt_result.h>

@@ -1,6 +1,3 @@
-# add_library(MarketProtoSource)
-# target_sources(MarketProtoSource PUBLIC marketMessages.proto)
-
 add_library(MarketProto)
 target_sources(MarketProto
 INTERFACE FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_BINARY_DIR} 
@@ -24,3 +21,7 @@ protobuf_generate(TARGET LogProto LANGUAGE cpp)
 add_library(PrintMarketProto INTERFACE)
 target_sources(PrintMarketProto INTERFACE FILE_SET HEADERS FILES printMarketProto.h)
 target_link_libraries(PrintMarketProto INTERFACE MarketProto)
+
+add_library(PrintLogProto INTERFACE)
+target_sources(PrintLogProto INTERFACE FILE_SET HEADERS FILES printLogProto.h)
+target_link_libraries(PrintLogProto INTERFACE LogProto PrintMarketProto)

@@ -8,7 +8,6 @@
 #include <iostream>
 #include <kafka/Types.h>
 #include <random>
-#include <sys/types.h>
 #include <utility>
 using namespace BloombergLP;
 
@@ -26,34 +25,6 @@ struct KafkaDeliveryCBSharedData {
     }
   }
   bsl::shared_ptr<bsl::vector<uint8_t>> data_;
-};
-
-struct KafkaDeliveryCBSingleData {
-  KafkaDeliveryCBSingleData(uint8_t *data) : data_(data) {}
-
-  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
-                  const kafka::Error &error) {
-    if (!error) {
-      std::cout << "Message delivered: " << metadata.toString() << '\n';
-    } else {
-      std::cerr << "Message failed to be delivered: " << error.message()
-                << '\n';
-    }
-    delete[] data_;
-  }
-  uint8_t *data_;
-};
-
-struct KafkaDeliveryCBNoeData {
-  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
-                  const kafka::Error &error) {
-    if (!error) {
-      std::cout << "Message delivered: " << metadata.toString() << '\n';
-    } else {
-      std::cerr << "Message failed to be delivered: " << error.message()
-                << '\n';
-    }
-  }
 };
 
 const bsl::string ExchangeName = "MarketExchange";
@@ -125,10 +96,11 @@ registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
                    kafka::clients::producer::KafkaProducer &kafkaProducer,
                    kafka::Key username) {
   auto &[vhost, exch, topology] = listenStuff;
-  LogProto::RabbitMSGIntent logMessage;
-  MarketProto::SignupMSG& signupMSG = *logMessage.mutable_signup();
-  signupMSG.set_name(username.toString());
-  auto rawData = messageToArray(signupMSG);
+  LogProto::AuditRecord auditRecord;
+  auto *intent = auditRecord.mutable_intent();
+  auto *signupMSG = intent->mutable_signup();
+  signupMSG->set_name(username.toString());
+  auto rawData = messageToArray(*signupMSG);
   rmqt::Properties properties;
   bsl::string repQueueName = uri();
   rmqt::QueueHandle responseQueue =
@@ -159,11 +131,9 @@ registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
         } else {
           setUpPromise.set_value(signupResponseMSG.assignedid());
         }
-        kafkaProducer.send(kafka::clients::producer::ProducerRecord(
-                               KafkaTopic::SignupResponse, username,
-                               kafka::Value(message.payload(), message.payloadSize())),
-                           KafkaDeliveryCBNoeData(),kafka::clients::producer::KafkaProducer::SendOption::
-                ToCopyRecordValue);
+        LogProto::AuditRecord auditRecord;
+        *auditRecord.mutable_signup_response() = signupResponseMSG;
+        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
         messageGuard.ack();
       },
       config);
@@ -173,14 +143,14 @@ registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
     return failureId;
   }
   rmqt::Message message = rmqt::Message(rawData, properties);
-  logMessage.set_guid(message.guid().data(),16);
-  logKafkaMessage(KafkaTopic::Signup, username, logMessage, kafkaProducer);
+  intent->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
   if (!sendMessage(producer, message, "signup")) {
     return failureId;
   }
-  LogProto::RabbitMSGSuccess successMessage;
-  successMessage.set_guid(message.guid().data(),16);
-  logKafkaMessage(KafkaTopic::Signup, username, successMessage, kafkaProducer);
+  LogProto::AuditRecord successAudit;
+  successAudit.mutable_success()->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, successAudit, kafkaProducer);
   if (!producer.waitForConfirms(bsls::TimeInterval(5))) {
     std::cerr << "Timeout expired for sending message to signup to market\n";
     return failureId;
@@ -218,13 +188,9 @@ OrderListenhandle startListeningToOrderResponses(
         MarketProto::OrderResponseMSG respMesg;
         auto success = respMesg.ParseFromArray(message.payload(), message.payloadSize());
         assert(success);
-        logProducer.send(
-            kafka::clients::producer::ProducerRecord(
-                KafkaTopic::OrderResponse, username,
-                kafka::Value(message.payload(), message.payloadSize())),
-            KafkaDeliveryCBNoeData(),
-            kafka::clients::producer::KafkaProducer::SendOption::
-                ToCopyRecordValue);
+        LogProto::AuditRecord auditRecord;
+        *auditRecord.mutable_order_response() = respMesg;
+        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
         marketState.processOrderResponse(
             bsl::stoll(message.properties().correlationId.value()), respMesg);
         messageGuard.ack();
@@ -245,13 +211,9 @@ OrderListenhandle startListeningToOrderResponses(
         MarketProto::OrderFillMSG orderFillMSG;
         auto success = orderFillMSG.ParseFromArray(message.payload(), message.payloadSize());
         assert(success);
-        logProducer.send(
-            kafka::clients::producer::ProducerRecord(
-                KafkaTopic::OrderFill, username,
-                kafka::Value(message.payload(), message.payloadSize())),
-            KafkaDeliveryCBNoeData(),
-            kafka::clients::producer::KafkaProducer::SendOption::
-                ToCopyRecordValue);
+        LogProto::AuditRecord auditRecord;
+        *auditRecord.mutable_order_fill() = orderFillMSG;
+        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
         marketState.processOrderFill(orderFillMSG);
         messageGuard.ack();
       });
@@ -269,22 +231,22 @@ bool sendOrderToMarket(rmqa::Producer &marketProducer,
                        bsl::string id, kafka::Key username, AtomicCounter &corrIdGenerator,
                        MarketOrder order, MarketState &marketState) {
   int64_t correlationId = corrIdGenerator.get();
-  MarketProto::OrderMSG orderMSG = order.toOrderMSG();
-  auto rawData = messageToArray(orderMSG);
+  LogProto::AuditRecord auditRecord;
+  auto *intent = auditRecord.mutable_intent();
+  *intent->mutable_order() = order.toOrderMSG();
+  auto rawData = messageToArray(intent->order());
   rmqt::Properties properties;
   properties.correlationId = bsl::to_string(correlationId);
   properties.replyTo = std::move(id);
   rmqt::Message message = rmqt::Message(rawData, properties);
-  LogProto::RabbitMSGIntent logMessage;
-  logMessage.set_guid(message.guid().data(),16);
-  logMessage.mutable_order()->CopyFrom(orderMSG);
-  logKafkaMessage(KafkaTopic::Order,username,logMessage,logProducer);
+  intent->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
   marketState.processOrderToMarket(correlationId, order);
   if (!sendMessage(marketProducer, message, "order")) {
     return false;
   }
-  LogProto::RabbitMSGSuccess successMsg;
-  successMsg.set_guid(message.guid().data(),16);
-  logKafkaMessage(KafkaTopic::Order,username,successMsg,logProducer);
+  LogProto::AuditRecord successAudit;
+  successAudit.mutable_success()->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, successAudit, logProducer);
   return true;
 }
