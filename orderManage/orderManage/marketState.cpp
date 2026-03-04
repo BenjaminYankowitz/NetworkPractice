@@ -8,7 +8,6 @@
 #include <iostream>
 #include <kafka/Types.h>
 #include <random>
-#include <string>
 #include <sys/types.h>
 #include <utility>
 using namespace BloombergLP;

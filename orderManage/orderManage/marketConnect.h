@@ -19,7 +19,6 @@
 #include <rmqt_message.h>
 #include <rmqt_properties.h>
 #include <rmqt_result.h>
-#include <string_view>
 
 extern const bsl::string ExchangeName;
 
