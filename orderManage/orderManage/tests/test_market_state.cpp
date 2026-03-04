@@ -1,6 +1,8 @@
 #include "marketState.h"
+#include "printMarketProto.h"
 #include <chrono>
 #include <gtest/gtest.h>
+#include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -227,4 +229,149 @@ TEST(MarketStateTests, ConcurrentResponseAndFill) {
   // After both complete: order fully filled, removed from market.
   EXPECT_FALSE(state.hasOrderOnMarket(99));
   EXPECT_FALSE(state.hasOrderInFlight(1));
+}
+
+// ---------------------------------------------------------------------------
+// FormatAsMoney tests
+// ---------------------------------------------------------------------------
+
+TEST(FormatAsMoneyTests, Zero) {
+  std::ostringstream oss;
+  oss << FormatAsMoney(0);
+  EXPECT_EQ(oss.str(), "$0");
+}
+
+TEST(FormatAsMoneyTests, WholeDollarsNoCents) {
+  std::ostringstream oss;
+  oss << FormatAsMoney(500);
+  EXPECT_EQ(oss.str(), "$5");
+}
+
+TEST(FormatAsMoneyTests, CentsWithLeadingZero) {
+  std::ostringstream oss;
+  oss << FormatAsMoney(1005);
+  EXPECT_EQ(oss.str(), "$10.05");
+}
+
+TEST(FormatAsMoneyTests, NegativeWithCents) {
+  std::ostringstream oss;
+  oss << FormatAsMoney(-1050);
+  EXPECT_EQ(oss.str(), "$-10.50");
+}
+
+// ---------------------------------------------------------------------------
+// MarketState edge cases
+// ---------------------------------------------------------------------------
+
+TEST(MarketStateTests, MultipleFillsCompleteOrder) {
+  MarketState state;
+  MarketOrder order("AAPL", 10, 1000, true);
+  state.processOrderToMarket(1, order);
+
+  // Partial response: 3 of 10 filled, rests with orderId=50
+  MarketProto::OrderResponseMSG resp;
+  resp.set_successful(true);
+  resp.set_amountfilled(3);
+  resp.set_orderid(50);
+  resp.set_price(3000);
+  state.processOrderResponse(1, resp);
+
+  EXPECT_TRUE(state.hasOrderOnMarket(50));
+  EXPECT_EQ(state.getOrderFilled(50), 3);
+
+  // First fill: 4 more (total 7, still < 10)
+  MarketProto::OrderFillMSG fill1;
+  fill1.set_orderid(50);
+  fill1.set_filled(4);
+  state.processOrderFill(fill1);
+
+  EXPECT_TRUE(state.hasOrderOnMarket(50));
+  EXPECT_EQ(state.getOrderFilled(50), 7);
+
+  // Second fill: remaining 3 (total 10 = amount, order removed)
+  MarketProto::OrderFillMSG fill2;
+  fill2.set_orderid(50);
+  fill2.set_filled(3);
+  state.processOrderFill(fill2);
+
+  EXPECT_FALSE(state.hasOrderOnMarket(50));
+}
+
+TEST(MarketStateTests, MultipleOrdersInFlightSimultaneously) {
+  MarketState state;
+  state.processOrderToMarket(10, MarketOrder("AAPL", 5, 100, true));
+  state.processOrderToMarket(20, MarketOrder("GOOG", 3, 200, false));
+  state.processOrderToMarket(30, MarketOrder("MSFT", 7, 300, true));
+
+  EXPECT_TRUE(state.hasOrderInFlight(10));
+  EXPECT_TRUE(state.hasOrderInFlight(20));
+  EXPECT_TRUE(state.hasOrderInFlight(30));
+
+  // Respond to middle order (full fill)
+  MarketProto::OrderResponseMSG resp;
+  resp.set_successful(true);
+  resp.set_amountfilled(3);
+  resp.set_price(600);
+  state.processOrderResponse(20, resp);
+
+  EXPECT_TRUE(state.hasOrderInFlight(10));
+  EXPECT_FALSE(state.hasOrderInFlight(20));
+  EXPECT_TRUE(state.hasOrderInFlight(30));
+}
+
+TEST(MarketStateTests, ZeroInitialFillFullyResting) {
+  MarketState state;
+  MarketOrder order("AAPL", 10, 1000, true);
+  state.processOrderToMarket(1, order);
+
+  // Response: 0 filled immediately, fully resting with orderId=60
+  MarketProto::OrderResponseMSG resp;
+  resp.set_successful(true);
+  resp.set_amountfilled(0);
+  resp.set_orderid(60);
+  resp.set_price(0);
+  state.processOrderResponse(1, resp);
+
+  EXPECT_TRUE(state.hasOrderOnMarket(60));
+  EXPECT_EQ(state.getOrderFilled(60), 0);
+
+  // Fill the full amount
+  MarketProto::OrderFillMSG fill;
+  fill.set_orderid(60);
+  fill.set_filled(10);
+  state.processOrderFill(fill);
+
+  EXPECT_FALSE(state.hasOrderOnMarket(60));
+}
+
+TEST(MarketStateTests, ConcurrentMultipleFills) {
+  MarketState state;
+  MarketOrder order("AAPL", 20, 1000, true);
+  state.processOrderToMarket(1, order);
+
+  // Response: 0 filled, fully resting with orderId=70
+  MarketProto::OrderResponseMSG resp;
+  resp.set_successful(true);
+  resp.set_amountfilled(0);
+  resp.set_orderid(70);
+  resp.set_price(0);
+  state.processOrderResponse(1, resp);
+
+  EXPECT_TRUE(state.hasOrderOnMarket(70));
+
+  // 4 threads each fill 5 shares concurrently
+  std::vector<std::thread> threads;
+  for (int i = 0; i < 4; ++i) {
+    threads.emplace_back([&state]() {
+      MarketProto::OrderFillMSG fill;
+      fill.set_orderid(70);
+      fill.set_filled(5);
+      state.processOrderFill(fill);
+    });
+  }
+  for (auto &t : threads)
+    t.join();
+
+  // 4 * 5 = 20 = amount, order should be removed
+  EXPECT_FALSE(state.hasOrderOnMarket(70));
 }

@@ -130,10 +130,10 @@ registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
           setUpPromise.set_value(failureId);
         } else {
           setUpPromise.set_value(signupResponseMSG.assignedid());
+          LogProto::AuditRecord auditRecord;
+          *auditRecord.mutable_signup_response() = signupResponseMSG;
+          logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
         }
-        LogProto::AuditRecord auditRecord;
-        *auditRecord.mutable_signup_response() = signupResponseMSG;
-        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
         messageGuard.ack();
       },
       config);

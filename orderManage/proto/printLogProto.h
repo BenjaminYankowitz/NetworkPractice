@@ -12,7 +12,7 @@ inline std::ostream &operator<<(std::ostream &out,
     out << std::hex << std::setfill('0') << std::setw(2)
         << static_cast<unsigned>(c);
   }
-  out << std::dec << "]";
+  out << std::dec << std::setfill(' ') << "]";
   switch (msg.msg_case()) {
   case LogProto::RabbitMSGIntent::kOrder:
     out << "\n" << msg.order();
@@ -34,7 +34,7 @@ inline std::ostream &operator<<(std::ostream &out,
     out << std::hex << std::setfill('0') << std::setw(2)
         << static_cast<unsigned>(c);
   }
-  out << std::dec << "]";
+  out << std::dec << std::setfill(' ') << "]";
   return out;
 }
 

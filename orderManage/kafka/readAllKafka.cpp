@@ -6,6 +6,7 @@
 #include <kafka/KafkaConsumer.h>
 #include <kafka/Types.h>
 #include <string>
+#include <string_view>
 static std::atomic_bool running = true;
 
 static void sigterm(int) { running = false; }
