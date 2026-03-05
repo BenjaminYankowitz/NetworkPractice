@@ -11,21 +11,15 @@
 #include <utility>
 using namespace BloombergLP;
 
-struct KafkaDeliveryCBSharedData {
-  KafkaDeliveryCBSharedData(bsl::shared_ptr<bsl::vector<uint8_t>> &&data)
-      : data_(std::move(data)) {}
-
-  void operator()(const kafka::clients::producer::RecordMetadata &metadata,
-                  const kafka::Error &error) {
-    if (!error) {
-      std::cout << "Message delivered: " << metadata.toString() << '\n';
-    } else {
-      std::cerr << "Message failed to be delivered: " << error.message()
-                << '\n';
-    }
+void kafkaDeliveryCallback(const kafka::clients::producer::RecordMetadata &metadata,
+                           const kafka::Error &error) {
+  if (!error) {
+    std::cout << "Message delivered: " << metadata.toString() << '\n';
+  } else {
+    std::cerr << "Message failed to be delivered: " << error.message()
+              << '\n';
   }
-  bsl::shared_ptr<bsl::vector<uint8_t>> data_;
-};
+}
 
 const bsl::string ExchangeName = "MarketExchange";
 
@@ -72,12 +66,13 @@ bsl::shared_ptr<bsl::vector<uint8_t>> messageToArray(const T& message) {
 
 template <class T>
 bool logKafkaMessage(const kafka::Topic& topic, const kafka::Key key, const T& message, kafka::clients::producer::KafkaProducer &logProducer){
-  auto rawSuccessLogData = messageToArray(message);
-  kafka::Value successValue(rawSuccessLogData->data(), rawSuccessLogData->size());
+  auto rawLogData = messageToArray(message);
+  kafka::Value value(rawLogData->data(), rawLogData->size());
   try {
     logProducer.send(kafka::clients::producer::ProducerRecord(
-                         topic, key, successValue),
-                     KafkaDeliveryCBSharedData(std::move(rawSuccessLogData)));
+                         topic, key, value),
+                     kafkaDeliveryCallback,
+                     kafka::clients::producer::KafkaProducer::SendOption::ToCopyRecordValue);
   } catch (const kafka::KafkaException &e) {
     std::cout << e.what() << '\n';
     return false;
