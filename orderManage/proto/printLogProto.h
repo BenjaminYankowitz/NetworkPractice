@@ -17,7 +17,7 @@ inline std::ostream &operator<<(std::ostream &out,
         << static_cast<unsigned>(c);
   }
   out << "]" << std::setfill(oldFill) << std::setw(oldw);
-  out.setf(oldFlags);
+  out.flags(oldFlags);
   switch (msg.msg_case()) {
   case LogProto::RabbitMSGIntent::kOrder:
     out << "\n" << msg.order();
@@ -43,7 +43,7 @@ inline std::ostream &operator<<(std::ostream &out,
         << static_cast<unsigned>(c);
   }
   out << "]" << std::setfill(oldFill) << std::setw(oldw);
-  out.setf(oldFlags);
+  out.flags(oldFlags);
   return out;
 }
 
