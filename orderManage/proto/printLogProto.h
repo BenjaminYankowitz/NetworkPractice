@@ -7,12 +7,17 @@
 
 inline std::ostream &operator<<(std::ostream &out,
                                 const LogProto::RabbitMSGIntent &msg) {
+                                  
+  auto oldFlags = out.flags();
+  auto oldFill = out.fill();
+  auto oldw = out.width();
   out << "Intent [guid=";
   for (unsigned char c : msg.guid()) {
     out << std::hex << std::setfill('0') << std::setw(2)
         << static_cast<unsigned>(c);
   }
-  out << std::dec << std::setfill(' ') << "]";
+  out << "]" << std::setfill(oldFill) << std::setw(oldw);
+  out.setf(oldFlags);
   switch (msg.msg_case()) {
   case LogProto::RabbitMSGIntent::kOrder:
     out << "\n" << msg.order();
@@ -30,11 +35,15 @@ inline std::ostream &operator<<(std::ostream &out,
 inline std::ostream &operator<<(std::ostream &out,
                                 const LogProto::RabbitMSGSuccess &msg) {
   out << "Success [guid=";
+  auto oldFlags = out.flags();
+  auto oldFill = out.fill();
+  auto oldw = out.width();
   for (unsigned char c : msg.guid()) {
     out << std::hex << std::setfill('0') << std::setw(2)
         << static_cast<unsigned>(c);
   }
-  out << std::dec << std::setfill(' ') << "]";
+  out << "]" << std::setfill(oldFill) << std::setw(oldw);
+  out.setf(oldFlags);
   return out;
 }
 
