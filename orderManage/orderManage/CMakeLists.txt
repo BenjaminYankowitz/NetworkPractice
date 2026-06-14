@@ -1,5 +1,3 @@
-find_package(rmqcpp REQUIRED)
-
 add_library(MarketConnect)
 target_sources(MarketConnect 
 PUBLIC FILE_SET HEADERS FILES marketState.h marketConnect.h

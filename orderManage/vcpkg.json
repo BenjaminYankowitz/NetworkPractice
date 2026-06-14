@@ -3,7 +3,10 @@
     "name": "ordermanage",
     "version": "1.0.0",
     "dependencies": [
-      "rmqcpp",
+      "bde",
+      "boost-asio",
+      "openssl",
+      "zlib",
       "gtest"
     ]
 }

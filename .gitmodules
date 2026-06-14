@@ -1,3 +1,6 @@
 [submodule "rabbitChat/rmqcpp"]
 	path = rabbitChat/rmqcpp
 	url = https://github.com/bloomberg/rmqcpp.git
+[submodule "orderManage/external/rmqcpp"]
+	path = orderManage/external/rmqcpp
+	url = https://github.com/bloomberg/rmqcpp.git
