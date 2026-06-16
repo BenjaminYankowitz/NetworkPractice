@@ -1,0 +1,247 @@
+#include "kafkaTopics.h"
+#include "marketConnect.h"
+#include "logMessages.pb.h"
+#include <bsl_optional.h>
+#include <bsl_vector.h>
+#include <cassert>
+#include <future>
+#include <iostream>
+#include <kafka/Types.h>
+#include <random>
+#include <utility>
+using namespace BloombergLP;
+
+void kafkaDeliveryCallback(const kafka::clients::producer::RecordMetadata &metadata,
+                           const kafka::Error &error) {
+  if (!error) {
+    std::cout << "Message delivered: " << metadata.toString() << '\n';
+  } else {
+    std::cerr << "Message failed to be delivered: " << error.message()
+              << '\n';
+  }
+}
+
+const bsl::string ExchangeName = "MarketExchange";
+
+bool sendMessage(rmqa::Producer &producer, const rmqt::Message &message,
+                 const bsl::string &routingKey) {
+  auto confirmCallback = [](const rmqt::Message &message,
+                            const bsl::string &routingKey,
+                            const rmqt::ConfirmResponse &response) {
+    if (response.status() == rmqt::ConfirmResponse::ACK) {
+      // Message is now guaranteed to be safe with the broker.
+    } else {
+      std::cerr << "Message not confirmed: " << message.guid()
+                << " for routing key " << routingKey << " " << response << "\n";
+    }
+  };
+  const rmqp::Producer::SendStatus sendResult =
+      producer.send(message, routingKey, confirmCallback);
+
+  if (sendResult != rmqp::Producer::SENDING) {
+    if (sendResult == rmqp::Producer::DUPLICATE) {
+      std::cerr << "Failed to send message: " << message.guid()
+                << " because an identical GUID is already outstanding\n";
+    } else {
+      std::cerr << "Unknown send failure for message: " << message.guid()
+                << "\n";
+    }
+    return false;
+  }
+  return true;
+}
+
+template <class T>
+bsl::shared_ptr<bsl::vector<uint8_t>> messageToArray(const T& message) {
+  bsl::shared_ptr<bsl::vector<uint8_t>> rawData =
+      bsl::make_shared<bsl::vector<uint8_t>>();
+  auto& buffer = *rawData;
+  const std::size_t size = message.ByteSizeLong();
+  buffer.clear();
+  buffer.resize(size);
+  auto success = message.SerializeToArray(buffer.data(),buffer.size());
+  assert(success);
+  return rawData;
+}
+
+template <class T>
+bool logKafkaMessage(const kafka::Topic& topic, const kafka::Key key, const T& message, kafka::clients::producer::KafkaProducer &logProducer){
+  auto rawLogData = messageToArray(message);
+  kafka::Value value(rawLogData->data(), rawLogData->size());
+  try {
+    logProducer.send(kafka::clients::producer::ProducerRecord(
+                         topic, key, value),
+                     kafkaDeliveryCallback,
+                     kafka::clients::producer::KafkaProducer::SendOption::ToCopyRecordValue);
+  } catch (const kafka::KafkaException &e) {
+    std::cout << e.what() << '\n';
+    return false;
+  }
+  return true;
+}
+
+bsl::string uri() {
+  std::random_device dev;
+  std::uniform_int_distribution<uint64_t> dist;
+  return bsl::to_string(dist(dev)) + '-' + bsl::to_string(dist(dev));
+}
+
+int64_t
+registerWithMarket(ListenStuff listenStuff, rmqa::Producer &producer,
+                   kafka::clients::producer::KafkaProducer &kafkaProducer,
+                   kafka::Key username) {
+  auto &[vhost, exch, topology] = listenStuff;
+  LogProto::AuditRecord auditRecord;
+  auto *intent = auditRecord.mutable_intent();
+  auto *signupMSG = intent->mutable_signup();
+  signupMSG->set_name(username.toString());
+  auto rawData = messageToArray(*signupMSG);
+  rmqt::Properties properties;
+  bsl::string repQueueName = uri();
+  rmqt::QueueHandle responseQueue =
+      topology.addQueue(repQueueName, rmqt::AutoDelete::ON);
+  properties.replyTo = repQueueName;
+  topology.bind(exch, responseQueue, properties.replyTo.value());
+  std::promise<int64_t> setUpPromise;
+  std::future<int64_t> setUpFuture = setUpPromise.get_future();
+  auto config = rmqt::ConsumerConfig();
+  config.setExclusiveFlag(rmqt::Exclusive::ON);
+  std::atomic<bool> signupResponseReceived{false};
+  rmqt::Result<rmqa::Consumer> activateConsumerResult = vhost.createConsumer(
+      topology, responseQueue,
+      [&kafkaProducer, &setUpPromise,
+       &signupResponseReceived, username](rmqp::MessageGuard &messageGuard) {
+        if (signupResponseReceived.exchange(true)) {
+          std::cerr
+              << "Received unexpected duplicate signup response; ignoring.\n";
+          messageGuard.ack();
+          return;
+        }
+        const rmqt::Message &message = messageGuard.message();
+        MarketProto::SignupResponseMSG signupResponseMSG;
+        if (!signupResponseMSG.ParseFromArray(message.payload(),
+                                              message.payloadSize())) {
+          std::cerr << "Failed to parse message\n";
+          setUpPromise.set_value(failureId);
+        } else {
+          setUpPromise.set_value(signupResponseMSG.assignedid());
+          LogProto::AuditRecord auditRecord;
+          *auditRecord.mutable_signup_response() = signupResponseMSG;
+          logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
+        }
+        messageGuard.ack();
+      },
+      config);
+  if (!activateConsumerResult) {
+    std::cerr << "Error creating connection: " << activateConsumerResult.error()
+              << "\n";
+    return failureId;
+  }
+  rmqt::Message message = rmqt::Message(rawData, properties);
+  intent->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, auditRecord, kafkaProducer);
+  if (!sendMessage(producer, message, "signup")) {
+    return failureId;
+  }
+  LogProto::AuditRecord successAudit;
+  successAudit.mutable_success()->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, successAudit, kafkaProducer);
+  if (!producer.waitForConfirms(bsls::TimeInterval(5))) {
+    std::cerr << "Timeout expired for sending message to signup to market\n";
+    return failureId;
+  }
+  if (setUpFuture.wait_for(std::chrono::seconds(5)) ==
+      std::future_status::timeout) {
+    std::cerr << "Did not hear back from market\n";
+    return failureId;
+  }
+  activateConsumerResult.value()->cancelAndDrain();
+  int64_t queueRet = setUpFuture.get();
+  if (queueRet == failureId) {
+    std::cerr << "Market did not confirm\n";
+    return failureId;
+  }
+  return queueRet;
+}
+
+OrderListenhandle startListeningToOrderResponses(
+    ListenStuff listenStuff,
+    kafka::clients::producer::KafkaProducer &logProducer, const bsl::string &id, kafka::Key username,
+    MarketState &marketState) {
+  OrderListenhandle ret;
+  auto &[vhost, exch, topology] = listenStuff;
+  bsl::string responseQueueKey = id + ".orderResponse";
+  std::cout << responseQueueKey << '\n';
+  ret.responseQueue = topology.addQueue(responseQueueKey, rmqt::AutoDelete::OFF,
+                                        rmqt::Durable::ON);
+  topology.bind(exch, ret.responseQueue, responseQueueKey);
+  rmqt::Result<rmqa::Consumer> responsesConsumerResult = vhost.createConsumer(
+      topology, ret.responseQueue,
+      [&marketState, &logProducer, username](rmqp::MessageGuard &messageGuard) {
+        const rmqt::Message &message = messageGuard.message();
+        assert(message.properties().correlationId.has_value());
+        MarketProto::OrderResponseMSG respMesg;
+        auto success = respMesg.ParseFromArray(message.payload(), message.payloadSize());
+        assert(success);
+        LogProto::AuditRecord auditRecord;
+        *auditRecord.mutable_order_response() = respMesg;
+        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
+        marketState.processOrderResponse(
+            bsl::stoll(message.properties().correlationId.value()), respMesg);
+        messageGuard.ack();
+      });
+  if (!responsesConsumerResult) {
+    std::cerr << "Error creating connection: "
+              << responsesConsumerResult.error() << "\n";
+    return ret;
+  }
+  ret.responseConsumer = responsesConsumerResult.value();
+  ret.fillQueue = topology.addQueue(id + ".orderFill", rmqt::AutoDelete::OFF,
+                                    rmqt::Durable::ON);
+  topology.bind(exch, ret.fillQueue, id + ".orderFill");
+  rmqt::Result<rmqa::Consumer> fillConsumerResult = vhost.createConsumer(
+      topology, ret.fillQueue,
+      [&marketState, &logProducer, username](rmqp::MessageGuard &messageGuard) {
+        const rmqt::Message &message = messageGuard.message();
+        MarketProto::OrderFillMSG orderFillMSG;
+        auto success = orderFillMSG.ParseFromArray(message.payload(), message.payloadSize());
+        assert(success);
+        LogProto::AuditRecord auditRecord;
+        *auditRecord.mutable_order_fill() = orderFillMSG;
+        logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
+        marketState.processOrderFill(orderFillMSG);
+        messageGuard.ack();
+      });
+  if (!fillConsumerResult) {
+    std::cerr << "Error creating connection: " << fillConsumerResult.error()
+              << "\n";
+    return ret;
+  }
+  ret.fillConsumer = fillConsumerResult.value();
+  return ret;
+}
+
+bool sendOrderToMarket(rmqa::Producer &marketProducer,
+                       kafka::clients::producer::KafkaProducer &logProducer,
+                       bsl::string id, kafka::Key username, AtomicCounter &corrIdGenerator,
+                       MarketOrder order, MarketState &marketState) {
+  int64_t correlationId = corrIdGenerator.get();
+  LogProto::AuditRecord auditRecord;
+  auto *intent = auditRecord.mutable_intent();
+  *intent->mutable_order() = order.toOrderMSG();
+  auto rawData = messageToArray(intent->order());
+  rmqt::Properties properties;
+  properties.correlationId = bsl::to_string(correlationId);
+  properties.replyTo = std::move(id);
+  rmqt::Message message = rmqt::Message(rawData, properties);
+  intent->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, auditRecord, logProducer);
+  marketState.processOrderToMarket(correlationId, order);
+  if (!sendMessage(marketProducer, message, "order")) {
+    return false;
+  }
+  LogProto::AuditRecord successAudit;
+  successAudit.mutable_success()->set_guid(message.guid().data(), 16);
+  logKafkaMessage(KafkaTopic::Audit, username, successAudit, logProducer);
+  return true;
+}

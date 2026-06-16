@@ -7,6 +7,7 @@
 *.o
 *.so
 *.out
+orderManage/order-manage-rust/target/
 #proto buff
 *.pb.*
 *_pb2.py
