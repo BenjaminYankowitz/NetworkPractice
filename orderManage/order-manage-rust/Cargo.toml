@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+amiquip = "0.4.2"
+crossbeam-channel = "0.5.15"
+protobuf = "3.7.2"
+serde = "1.0.228"
+tokio = "1.52.3"
+
+[build-dependencies]
+protobuf-codegen = "3.7.2"
