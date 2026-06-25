@@ -5,6 +5,7 @@
     "dependencies": [
       "bde",
       "boost-asio",
+      "modern-cpp-kafka",
       "openssl",
       "zlib",
       "gtest"
