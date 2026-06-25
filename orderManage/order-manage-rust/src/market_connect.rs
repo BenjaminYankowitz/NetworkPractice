@@ -31,8 +31,8 @@ impl KafkaProducer {
 }
 
 pub struct OrderListenhandle {
-    order_response_thread: JoinHandle<()>,
-    fill_message_thread: JoinHandle<()>,
+    _order_response_thread: JoinHandle<()>,
+    _fill_message_thread: JoinHandle<()>,
 }
 
 pub const MAX_SYMBOL_SIZE: usize = 5;
@@ -181,25 +181,26 @@ impl MarketState {
         }
     }
 
-    // Accessors for testing and diagnostics.
-    pub fn has_order_in_flight(&self, corr_id: i64) -> bool {
-        self.orders_in_flight.lock().unwrap().contains_key(&corr_id)
-    }
-    pub fn has_order_on_market(&self, corr_id: i64) -> bool {
-        self.orders_on_market.read().unwrap().contains_key(&corr_id)
-    }
-    pub fn get_order_filled(&self, order_id: i64) -> Option<i64> {
-        self.orders_on_market
-            .read()
-            .unwrap()
-            .get(&order_id)
-            .map(|o| o.filled.load(Ordering::SeqCst))
-    }
-    pub fn orders_on_market_empty(&self) -> bool {
-        self.orders_on_market.read().unwrap().is_empty()
-    }
+    // // Accessors for testing and diagnostics.
+    // pub fn has_order_in_flight(&self, corr_id: i64) -> bool {
+    //     self.orders_in_flight.lock().unwrap().contains_key(&corr_id)
+    // }
+    // pub fn has_order_on_market(&self, corr_id: i64) -> bool {
+    //     self.orders_on_market.read().unwrap().contains_key(&corr_id)
+    // }
+    // pub fn get_order_filled(&self, order_id: i64) -> Option<i64> {
+    //     self.orders_on_market
+    //         .read()
+    //         .unwrap()
+    //         .get(&order_id)
+    //         .map(|o| o.filled.load(Ordering::SeqCst))
+    // }
+    // pub fn orders_on_market_empty(&self) -> bool {
+    //     self.orders_on_market.read().unwrap().is_empty()
+    // }
 }
 #[derive(Debug)]
+#[allow(dead_code)] // Errors are just printed.
 pub enum RegisterError {
     Amiquip(amiquip::Error),
     SendTimeout(crossbeam_channel::RecvTimeoutError),
@@ -282,7 +283,7 @@ pub fn start_listening_to_order_responses(
     let order_response_channel = connection.open_channel(None).expect("Channel must open");
     let fill_message_channel = connection.open_channel(None).expect("Channel must open");
     let market_state_fill_message = market_state.clone();
-    let order_response_thread = std::thread::spawn(move || {
+    let _order_response_thread = std::thread::spawn(move || {
         let _ = kafka_poducer; //To do Add kafka logging
         let _ = username;
         let response_queue_key = id_copy + ".orderResponse";
@@ -378,13 +379,14 @@ pub fn start_listening_to_order_responses(
     });
     exit_barrier.wait();
     OrderListenhandle {
-        order_response_thread,
-        fill_message_thread,
+        _order_response_thread,
+        _fill_message_thread: fill_message_thread,
     }
 }
-pub fn send_order_to_market(exchange: &Exchange, kafka_poducer: &mut KafkaProducer,  id : &str, uesrname : &str, corr_id_gen : &AtomicCounter, order : MarketOrder, market_state: &MarketState) -> amiquip::Result<()> {
+pub fn send_order_to_market(exchange: &Exchange, kafka_poducer: &mut KafkaProducer,  id : &str, username : &str, corr_id_gen : &AtomicCounter, order : MarketOrder, market_state: &MarketState) -> amiquip::Result<()> {
   let correlation_id = corr_id_gen.get();
   let _ = kafka_poducer; //To do add Kafka stuff
+  let _ = username;
 //   LogProto::AuditRecord auditRecord;
 //   auto *intent = auditRecord.mutable_intent();
 //   *intent->mutable_order() = order.toOrderMSG();

@@ -4,7 +4,8 @@ use std::{
 };
 mod market_connect;
 use crate::market_connect::{
-    KafkaProducer, MarketOrder, MarketState, register_with_market, send_order_to_market, start_listening_to_order_responses
+    KafkaProducer, MarketOrder, MarketState, register_with_market, send_order_to_market,
+    start_listening_to_order_responses,
 };
 
 fn main() {
@@ -54,7 +55,7 @@ fn main() {
         &id,
         &username,
         &correlation_id_generator,
-        MarketOrder::new("slugs",10,1000,false),
+        MarketOrder::new("slugs", 10, 1000, false),
         &market_state,
     )
     .expect("order should be sent to market");
@@ -64,10 +65,20 @@ fn main() {
         &id,
         &username,
         &correlation_id_generator,
-        MarketOrder::new("slugs",10,1000,true),
+        MarketOrder::new("slugs", 10, 1000, true),
         &market_state,
     )
     .expect("order should be sent to market");
+    let c1 = marekt_regestration
+        .publisher_confirms
+        .recv()
+        .expect("Should recive 1 confirm");
+    println!("sell order confirmed {:?}", c1);
+    let c2 = marekt_regestration
+        .publisher_confirms
+        .recv()
+        .expect("Should recive 2 confirms");
+    println!("buy order confirmed {:?}", c2);
     loop {
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
